@@ -1257,39 +1257,6 @@ set_failed:
 	return filemap_write_and_wait(src_inode->i_mapping);
 }
 
-/*
- * Flush out either the folio that overlaps the beginning of a range in which
- * pos resides or the folio that overlaps the end of a range unless that folio
- * is entirely within the range we're going to invalidate.  We extend the flush
- * bounds to encompass the folio.
- */
-static int cifs_flush_folio(struct inode *inode, loff_t pos, loff_t *_fstart, loff_t *_fend,
-			    bool first)
-{
-	struct folio *folio;
-	unsigned long long fpos, fend;
-	pgoff_t index = pos / PAGE_SIZE;
-	size_t size;
-	int rc = 0;
-
-	folio = filemap_get_folio(inode->i_mapping, index);
-	if (IS_ERR(folio))
-		return 0;
-
-	size = folio_size(folio);
-	fpos = folio_pos(folio);
-	fend = fpos + size - 1;
-	*_fstart = min_t(unsigned long long, *_fstart, fpos);
-	*_fend   = max_t(unsigned long long, *_fend, fend);
-	if ((first && pos == fpos) || (!first && pos == fend))
-		goto out;
-
-	rc = filemap_write_and_wait_range(inode->i_mapping, fpos, fend);
-out:
-	folio_put(folio);
-	return rc;
-}
-
 static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 		struct file *dst_file, loff_t destoff, loff_t len,
 		unsigned int remap_flags)
@@ -1350,6 +1317,38 @@ out:
 	return rc < 0 ? rc : len;
 }
 
+static int filemap_invalidate_inode(struct inode *inode, bool flush,
+			     loff_t start, loff_t end)
+{
+	struct address_space *mapping = inode->i_mapping;
+	pgoff_t first = start >> PAGE_SHIFT;
+	pgoff_t last = end >> PAGE_SHIFT;
+	pgoff_t nr = end == LLONG_MAX ? ULONG_MAX : last - first + 1;
+
+	if (!mapping || !mapping->nrpages || end < start)
+		goto out;
+
+	/* Prevent new folios from being added to the inode. */
+	filemap_invalidate_lock(mapping);
+
+	if (!mapping->nrpages)
+		goto unlock;
+
+	unmap_mapping_pages(mapping, first, nr, false);
+
+	/* Write back the data if we're asked to. */
+	if (flush)
+		filemap_fdatawrite_range(mapping, start, end);
+
+	/* Wait for writeback to complete on all folios and discard. */
+	invalidate_inode_pages2_range(mapping, start / PAGE_SIZE, end / PAGE_SIZE);
+
+unlock:
+	filemap_invalidate_unlock(mapping);
+out:
+	return filemap_check_errors(mapping);
+}
+
 ssize_t cifs_file_copychunk_range(unsigned int xid,
 				struct file *src_file, loff_t off,
 				struct file *dst_file, loff_t destoff,
@@ -1362,7 +1361,6 @@ ssize_t cifs_file_copychunk_range(unsigned int xid,
 	struct cifsFileInfo *smb_file_target;
 	struct cifs_tcon *src_tcon;
 	struct cifs_tcon *target_tcon;
-	unsigned long long destend, fstart, fend;
 	ssize_t rc;
 
 	cifs_dbg(FYI, "copychunk range\n");
@@ -1412,23 +1410,13 @@ ssize_t cifs_file_copychunk_range(unsigned int xid,
 			goto unlock;
 	}
 
-	destend = destoff + len - 1;
-
-	/* Flush the folios at either end of the destination range to prevent
-	 * accidental loss of dirty data outside of the range.
-	 */
-	fstart = destoff;
-	fend = destend;
-
-	rc = cifs_flush_folio(target_inode, destoff, &fstart, &fend, true);
-	if (rc)
-		goto unlock;
-	rc = cifs_flush_folio(target_inode, destend, &fstart, &fend, false);
-	if (rc)
-		goto unlock;
-
-	/* Discard all the folios that overlap the destination region. */
-	truncate_inode_pages_range(&target_inode->i_data, fstart, fend);
+ 	/* Flush and invalidate all the folios in the destination region.  If
+ 	 * the copy was successful, then some of the flush is extra overhead,
+ 	 * but we need to allow for the copy failing in some way (eg. ENOSPC).
+ 	 */
+        rc = filemap_invalidate_inode(target_inode, true, destoff, destoff + len - 1);
+ 	if (rc)
+                goto unlock;
 
 	rc = file_modified(dst_file);
 	if (!rc) {
