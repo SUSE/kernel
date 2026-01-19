@@ -2903,7 +2903,9 @@ static int sched_rt_global_constraints(void)
 	int ret = 0;
 
 	mutex_lock(&rt_constraints_mutex);
-	ret = __rt_schedulable(NULL, 0, 0);
+	ret = __rt_schedulable(&root_task_group,
+			       ns_to_ktime(global_rt_period()),
+			       global_rt_runtime());
 	mutex_unlock(&rt_constraints_mutex);
 
 	return ret;
