@@ -2926,19 +2926,6 @@ int sched_rt_can_attach(struct task_group *tg, struct task_struct *tsk)
 #ifdef CONFIG_SYSCTL
 static int sched_rt_global_constraints(void)
 {
-	unsigned long flags;
-	int i;
-
-	raw_spin_lock_irqsave(&root_task_group.rt_bandwidth.rt_runtime_lock, flags);
-	for_each_possible_cpu(i) {
-		struct rt_rq *rt_rq = &cpu_rq(i)->rt;
-
-		raw_spin_lock(&rt_rq->rt_runtime_lock);
-		rt_rq->rt_runtime = global_rt_runtime();
-		raw_spin_unlock(&rt_rq->rt_runtime_lock);
-	}
-	raw_spin_unlock_irqrestore(&root_task_group.rt_bandwidth.rt_runtime_lock, flags);
-
 	return 0;
 }
 #endif /* CONFIG_SYSCTL */
@@ -2959,8 +2946,17 @@ static int sched_rt_global_validate(void)
 static void sched_rt_do_global(void)
 {
 	unsigned long flags;
+	int i;
 
 	raw_spin_lock_irqsave(&root_task_group.rt_bandwidth.rt_runtime_lock, flags);
+	for_each_possible_cpu(i) {
+		struct rt_rq *rt_rq = &cpu_rq(i)->rt;
+
+		raw_spin_lock(&rt_rq->rt_runtime_lock);
+		rt_rq->rt_runtime = global_rt_runtime();
+		raw_spin_unlock(&rt_rq->rt_runtime_lock);
+	}
+
 	root_task_group.rt_bandwidth.rt_runtime = global_rt_runtime();
 	root_task_group.rt_bandwidth.rt_period = ns_to_ktime(global_rt_period());
 	raw_spin_unlock_irqrestore(&root_task_group.rt_bandwidth.rt_runtime_lock, flags);
