@@ -177,7 +177,7 @@ void nf_send_reset6(struct net *net, struct sk_buff *oldskb, int hook)
 		skb_dst_set(oldskb, dst);
 	}
 
-	fl6.flowi6_oif = l3mdev_master_ifindex(skb_dst(oldskb)->dev);
+	fl6.flowi6_oif = l3mdev_master_ifindex(skb_dst_dev(oldskb));
 	fl6.flowi6_mark = IP6_REPLY_MARK(net, oldskb->mark);
 	security_skb_classify_flow(oldskb, flowi6_to_flowi(&fl6));
 	dst = ip6_route_output(net, NULL, &fl6);
