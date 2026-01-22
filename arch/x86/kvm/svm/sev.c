@@ -4411,12 +4411,10 @@ static void sev_es_vcpu_after_set_cpuid(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	if (boot_cpu_has(X86_FEATURE_V_TSC_AUX)) {
-		bool v_tsc_aux = guest_cpu_cap_has(vcpu, X86_FEATURE_RDTSCP) ||
-				 guest_cpu_cap_has(vcpu, X86_FEATURE_RDPID);
-
-		set_msr_interception(vcpu, svm->msrpm, MSR_TSC_AUX, v_tsc_aux, v_tsc_aux);
-	}
+	if (boot_cpu_has(X86_FEATURE_V_TSC_AUX))
+		svm_set_intercept_for_msr(vcpu, MSR_TSC_AUX, MSR_TYPE_RW,
+					  !guest_cpu_cap_has(vcpu, X86_FEATURE_RDTSCP) &&
+					  !guest_cpu_cap_has(vcpu, X86_FEATURE_RDPID));
 
 	/*
 	 * For SEV-ES, accesses to MSR_IA32_XSS should not be intercepted if
@@ -4432,9 +4430,9 @@ static void sev_es_vcpu_after_set_cpuid(struct vcpu_svm *svm)
 	 */
 	if (guest_cpu_cap_has(vcpu, X86_FEATURE_XSAVES) &&
 	    guest_cpuid_has(vcpu, X86_FEATURE_XSAVES))
-		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_XSS, 1, 1);
+		svm_disable_intercept_for_msr(vcpu, MSR_IA32_XSS, MSR_TYPE_RW);
 	else
-		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_XSS, 0, 0);
+		svm_enable_intercept_for_msr(vcpu, MSR_IA32_XSS, MSR_TYPE_RW);
 }
 
 void sev_vcpu_after_set_cpuid(struct vcpu_svm *svm)
@@ -4506,9 +4504,9 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 	svm_clr_intercept(svm, INTERCEPT_XSETBV);
 
 	/* Clear intercepts on MSRs that are context switched by hardware. */
-	set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_SEV_ES_GHCB, 1, 1);
-	set_msr_interception(vcpu, svm->msrpm, MSR_EFER, 1, 1);
-	set_msr_interception(vcpu, svm->msrpm, MSR_IA32_CR_PAT, 1, 1);
+	svm_disable_intercept_for_msr(vcpu, MSR_AMD64_SEV_ES_GHCB, MSR_TYPE_RW);
+	svm_disable_intercept_for_msr(vcpu, MSR_EFER, MSR_TYPE_RW);
+	svm_disable_intercept_for_msr(vcpu, MSR_IA32_CR_PAT, MSR_TYPE_RW);
 }
 
 void sev_init_vmcb(struct vcpu_svm *svm)
