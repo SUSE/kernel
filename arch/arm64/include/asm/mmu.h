@@ -79,7 +79,6 @@ extern void create_pgd_mapping(struct mm_struct *mm, phys_addr_t phys,
 extern void *fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot);
 extern void mark_linear_text_alias_ro(void);
 extern int split_kernel_leaf_mapping(unsigned long start, unsigned long end);
-extern void init_idmap_kpti_bbml2_flag(void);
 extern void linear_map_maybe_split_to_ptes(void);
 
 /*
@@ -109,6 +108,12 @@ static inline bool kaslr_requires_kpti(void)
 
 #define INIT_MM_CONTEXT(name)	\
 	.pgd = swapper_pg_dir,
+
+#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
+void kpti_install_ng_mappings(void);
+#else
+static inline void kpti_install_ng_mappings(void) {}
+#endif
 
 #endif	/* !__ASSEMBLY__ */
 #endif
