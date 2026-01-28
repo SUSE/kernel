@@ -443,6 +443,7 @@
 
 
 #define X86_FEATURE_INDIRECT_THUNK_ITS	(21*32 + 9) /* Use thunk for indirect branches in lower half of cacheline */
+#define X86_FEATURE_IBPB_EXIT_TO_USER	(21*32+14) /* Use IBPB on exit-to-userspace, see VMSCAPE bug */
 
 #define X86_EXT_FEATURE(x)		(NBUGINTS*32 + (x))
 #define X86_FEATUREINDEX(x)		((x) < NCAPINTS*32 ? (x) : (x) - NBUGINTS*32)
@@ -506,4 +507,5 @@
 #define X86_BUG_IBPB_NO_RET		X86_EXT_BUG(1*32 + 4) /* "ibpb_no_ret" IBPB omits return target predictions */
 #define X86_BUG_ITS			X86_EXT_BUG(1*32 + 6) /* "its" CPU is affected by Indirect Target Selection */
 #define X86_BUG_ITS_NATIVE_ONLY		X86_EXT_BUG(1*32 + 7) /* "its_native_only" CPU is affected by ITS, VMX is not affected */
+#define X86_BUG_VMSCAPE		X86_EXT_BUG( 1*32+10) /* "vmscape" CPU is affected by VMSCAPE attacks from guests */
 #endif /* _ASM_X86_CPUFEATURES_H */
