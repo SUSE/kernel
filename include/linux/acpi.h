@@ -1097,7 +1097,7 @@ static inline acpi_handle acpi_get_processor_handle(int cpu)
 
 static inline int acpi_mrrm_max_mem_region(void)
 {
-	return -ENOENT;
+	return 1;
 }
 
 #endif	/* !CONFIG_ACPI */
