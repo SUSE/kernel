@@ -64,6 +64,12 @@ struct cached_fids {
 	struct delayed_work laundromat_work;
 };
 
+static inline bool
+is_valid_cached_dir(struct cached_fid *cfid)
+{
+	return cfid->time && cfid->has_lease;
+}
+
 extern struct cached_fids *init_cached_dirs(void);
 extern void free_cached_dirs(struct cached_fids *cfids);
 extern int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
