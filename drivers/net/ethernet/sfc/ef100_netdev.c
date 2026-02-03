@@ -450,7 +450,6 @@ int ef100_probe_netdev(struct efx_probe_data *probe_data)
 	net_dev->hw_enc_features |= efx->type->offload_features;
 	net_dev->vlan_features |= NETIF_F_HW_CSUM | NETIF_F_SG |
 				  NETIF_F_HIGHDMA | NETIF_F_ALL_TSO;
-	efx->mdio.dev = net_dev;
 	nic_data = efx->nic_data;
 	netif_set_tso_max_size(efx->net_dev, nic_data->tso_max_payload_len);
 	netif_set_tso_max_segs(efx->net_dev, nic_data->tso_max_payload_num_segs);
