@@ -325,6 +325,8 @@ int mlx5hws_pool_chunk_alloc(struct mlx5hws_pool *pool,
 
 	mutex_lock(&pool->lock);
 	ret = pool->p_get_chunk(pool, chunk);
+	if (ret == 0)
+		pool->available_elems -= 1 << chunk->order;
 	mutex_unlock(&pool->lock);
 
 	return ret;
@@ -335,6 +337,7 @@ void mlx5hws_pool_chunk_free(struct mlx5hws_pool *pool,
 {
 	mutex_lock(&pool->lock);
 	pool->p_put_chunk(pool, chunk);
+	pool->available_elems += 1 << chunk->order;
 	mutex_unlock(&pool->lock);
 }
 
@@ -361,6 +364,7 @@ mlx5hws_pool_create(struct mlx5hws_context *ctx, struct mlx5hws_pool_attr *pool_
 		res_db_type = MLX5HWS_POOL_DB_TYPE_BITMAP;
 
 	pool->alloc_log_sz = pool_attr->alloc_log_sz;
+	pool->available_elems = 1 << pool_attr->alloc_log_sz;
 
 	if (hws_pool_db_init(pool, res_db_type))
 		goto free_pool;
@@ -377,6 +381,9 @@ free_pool:
 void mlx5hws_pool_destroy(struct mlx5hws_pool *pool)
 {
 	mutex_destroy(&pool->lock);
+
+	if (pool->available_elems != 1 << pool->alloc_log_sz)
+		mlx5hws_err(pool->ctx, "Attempting to destroy non-empty pool\n");
 
 	if (pool->resource)
 		hws_pool_resource_free(pool);
