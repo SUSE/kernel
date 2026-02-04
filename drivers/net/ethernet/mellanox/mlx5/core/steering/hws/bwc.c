@@ -620,6 +620,7 @@ static int hws_bwc_matcher_move_all_simple(struct mlx5hws_bwc_matcher *bwc_match
 	struct list_head *rules_list;
 	u32 pending_rules;
 	int i, ret = 0;
+	bool drain;
 
 	mlx5hws_bwc_rule_fill_attr(bwc_matcher, 0, 0, &rule_attr);
 
@@ -647,10 +648,12 @@ static int hws_bwc_matcher_move_all_simple(struct mlx5hws_bwc_matcher *bwc_match
 			}
 
 			pending_rules++;
+			drain = pending_rules >=
+				hws_bwc_get_burst_th(ctx, rule_attr.queue_id);
 			ret = mlx5hws_bwc_queue_poll(ctx,
 						     rule_attr.queue_id,
 						     &pending_rules,
-						     false);
+						     drain);
 			if (unlikely(ret)) {
 				if (ret == -ETIMEDOUT) {
 					mlx5hws_err(ctx,
