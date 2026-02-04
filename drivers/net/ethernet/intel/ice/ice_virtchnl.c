@@ -3063,8 +3063,8 @@ err:
 static int ice_vc_query_rxdid(struct ice_vf *vf)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
-	struct virtchnl_supported_rxdids rxdid = {};
 	struct ice_pf *pf = vf->pf;
+	u64 rxdid;
 
 	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states)) {
 		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -3076,7 +3076,7 @@ static int ice_vc_query_rxdid(struct ice_vf *vf)
 		goto err;
 	}
 
-	rxdid.supported_rxdids = pf->supported_rxdids;
+	rxdid = pf->supported_rxdids;
 
 err:
 	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_SUPPORTED_RXDIDS,
