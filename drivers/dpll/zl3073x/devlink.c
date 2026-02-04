@@ -98,11 +98,6 @@ zl3073x_devlink_reload_down(struct devlink *devlink, bool netns_change,
 	return 0;
 }
 
-enum zl3073x_devlink_param_id {
-	ZL3037X_DEVLINK_PARAM_ID_BASE = DEVLINK_PARAM_GENERIC_ID_MAX,
-	ZL3037X_DEVLINK_PARAM_ID_CLOCK_ID,
-};
-
 static int
 zl3073x_devlink_reload_up(struct devlink *devlink,
 			  enum devlink_reload_action action,
@@ -118,7 +113,7 @@ zl3073x_devlink_reload_up(struct devlink *devlink,
 		return -EOPNOTSUPP;
 
 	rc = devl_param_driverinit_value_get(devlink,
-					     ZL3037X_DEVLINK_PARAM_ID_CLOCK_ID,
+					     DEVLINK_PARAM_GENERIC_ID_CLOCK_ID,
 					     &val);
 	if (rc)
 		return rc;
@@ -332,11 +327,9 @@ zl3073x_devlink_param_clock_id_validate(struct devlink *devlink, u32 id,
 }
 
 static const struct devlink_param zl3073x_devlink_params[] = {
-	DEVLINK_PARAM_DRIVER(ZL3037X_DEVLINK_PARAM_ID_CLOCK_ID,
-			     "clock_id", DEVLINK_PARAM_TYPE_U64,
-			     BIT(DEVLINK_PARAM_CMODE_DRIVERINIT),
-			     NULL, NULL,
-			     zl3073x_devlink_param_clock_id_validate),
+	DEVLINK_PARAM_GENERIC(CLOCK_ID, BIT(DEVLINK_PARAM_CMODE_DRIVERINIT),
+			      NULL, NULL,
+			      zl3073x_devlink_param_clock_id_validate),
 };
 
 static void
@@ -383,7 +376,7 @@ int zl3073x_devlink_register(struct zl3073x_dev *zldev)
 
 	value.vu64 = zldev->clock_id;
 	devl_param_driverinit_value_set(devlink,
-					ZL3037X_DEVLINK_PARAM_ID_CLOCK_ID,
+					DEVLINK_PARAM_GENERIC_ID_CLOCK_ID,
 					value);
 
 	/* Register devlink instance */
