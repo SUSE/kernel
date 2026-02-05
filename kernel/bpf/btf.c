@@ -2803,7 +2803,7 @@ static void btf_ref_type_log(struct btf_verifier_env *env,
 	btf_verifier_log(env, "type_id=%u", t->type);
 }
 
-static struct btf_kind_operations modifier_ops = {
+static const struct btf_kind_operations modifier_ops = {
 	.check_meta = btf_ref_type_check_meta,
 	.resolve = btf_modifier_resolve,
 	.check_member = btf_modifier_check_member,
@@ -2812,7 +2812,7 @@ static struct btf_kind_operations modifier_ops = {
 	.show = btf_modifier_show,
 };
 
-static struct btf_kind_operations ptr_ops = {
+static const struct btf_kind_operations ptr_ops = {
 	.check_meta = btf_ref_type_check_meta,
 	.resolve = btf_ptr_resolve,
 	.check_member = btf_ptr_check_member,
@@ -2853,7 +2853,7 @@ static void btf_fwd_type_log(struct btf_verifier_env *env,
 	btf_verifier_log(env, "%s", btf_type_kflag(t) ? "union" : "struct");
 }
 
-static struct btf_kind_operations fwd_ops = {
+static const struct btf_kind_operations fwd_ops = {
 	.check_meta = btf_fwd_check_meta,
 	.resolve = btf_df_resolve,
 	.check_member = btf_df_check_member,
@@ -3104,7 +3104,7 @@ static void btf_array_show(const struct btf *btf, const struct btf_type *t,
 	__btf_array_show(btf, t, type_id, data, bits_offset, show);
 }
 
-static struct btf_kind_operations array_ops = {
+static const struct btf_kind_operations array_ops = {
 	.check_meta = btf_array_check_meta,
 	.resolve = btf_array_resolve,
 	.check_member = btf_array_check_member,
@@ -4186,7 +4186,7 @@ static void btf_struct_show(const struct btf *btf, const struct btf_type *t,
 	__btf_struct_show(btf, t, type_id, data, bits_offset, show);
 }
 
-static struct btf_kind_operations struct_ops = {
+static const struct btf_kind_operations struct_ops = {
 	.check_meta = btf_struct_check_meta,
 	.resolve = btf_struct_resolve,
 	.check_member = btf_struct_check_member,
@@ -4354,7 +4354,7 @@ static void btf_enum_show(const struct btf *btf, const struct btf_type *t,
 	btf_show_end_type(show);
 }
 
-static struct btf_kind_operations enum_ops = {
+static const struct btf_kind_operations enum_ops = {
 	.check_meta = btf_enum_check_meta,
 	.resolve = btf_df_resolve,
 	.check_member = btf_enum_check_member,
@@ -4457,7 +4457,7 @@ static void btf_enum64_show(const struct btf *btf, const struct btf_type *t,
 	btf_show_end_type(show);
 }
 
-static struct btf_kind_operations enum64_ops = {
+static const struct btf_kind_operations enum64_ops = {
 	.check_meta = btf_enum64_check_meta,
 	.resolve = btf_df_resolve,
 	.check_member = btf_enum_check_member,
@@ -4535,7 +4535,7 @@ done:
 	btf_verifier_log(env, ")");
 }
 
-static struct btf_kind_operations func_proto_ops = {
+static const struct btf_kind_operations func_proto_ops = {
 	.check_meta = btf_func_proto_check_meta,
 	.resolve = btf_df_resolve,
 	/*
@@ -4593,7 +4593,7 @@ static int btf_func_resolve(struct btf_verifier_env *env,
 	return 0;
 }
 
-static struct btf_kind_operations func_ops = {
+static const struct btf_kind_operations func_ops = {
 	.check_meta = btf_func_check_meta,
 	.resolve = btf_func_resolve,
 	.check_member = btf_df_check_member,
