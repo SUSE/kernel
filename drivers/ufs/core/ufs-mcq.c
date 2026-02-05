@@ -539,7 +539,7 @@ int ufshcd_mcq_sq_cleanup(struct ufs_hba *hba, int task_tag)
 	struct scsi_cmnd *cmd = lrbp->cmd;
 	struct ufs_hw_queue *hwq;
 	void __iomem *reg, *opr_sqd_base;
-	u32 nexus, id, val, rtc;
+	u32 nexus, id, val;
 	int err;
 
 	if (hba->quirks & UFSHCD_QUIRK_MCQ_BROKEN_RTC)
@@ -573,18 +573,18 @@ int ufshcd_mcq_sq_cleanup(struct ufs_hba *hba, int task_tag)
 	writel(readl(opr_sqd_base + REG_SQRTC) | SQ_ICU,
 		opr_sqd_base + REG_SQRTC);
 
-	/* Poll SQRTSy.CUS = 1. Return result from SQRTSy.RTC */
+	/* Wait until SQRTSy.CUS = 1. Report SQRTSy.RTC. */
 	reg = opr_sqd_base + REG_SQRTS;
 	err = read_poll_timeout(readl, val, val & SQ_CUS, 20,
 				MCQ_POLL_US, false, reg);
-	rtc = FIELD_GET(SQ_ICU_ERR_CODE_MASK, readl(reg));
-	if (err || rtc)
-		dev_err(hba->dev, "%s: failed. hwq=%d, tag=%d err=%d RTC=%d\n",
-			__func__, id, task_tag, err, rtc);
+	if (err)
+		dev_err(hba->dev, "%s: failed. hwq=%d, tag=%d err=%d\n",
+			__func__, id, task_tag, err);
 	else
 		dev_info(hba->dev,
 			 "%s, hwq %d: cleanup return code (RTC) %ld\n",
-			 __func__, id, rtc);
+			 __func__, id,
+			 FIELD_GET(SQ_ICU_ERR_CODE_MASK, readl(reg)));
 
 	if (ufshcd_mcq_sq_start(hba, hwq))
 		err = -ETIMEDOUT;
