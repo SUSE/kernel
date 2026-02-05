@@ -1085,7 +1085,7 @@ int bnxt_qplib_create_qp(struct bnxt_qplib_res *res, struct bnxt_qplib_qp *qp)
 		qp_flags |= CMDQ_CREATE_QP_QP_FLAGS_FORCE_COMPLETION;
 	if (qp->wqe_mode == BNXT_QPLIB_WQE_MODE_VARIABLE)
 		qp_flags |= CMDQ_CREATE_QP_QP_FLAGS_VARIABLE_SIZED_WQE_ENABLED;
-	if (_is_ext_stats_supported(res->dattr->dev_cap_flags) && !res->is_vf)
+	if (bnxt_ext_stats_supported(res->cctx, res->dattr->dev_cap_flags, res->is_vf))
 		qp_flags |= CMDQ_CREATE_QP_QP_FLAGS_EXT_STATS_ENABLED;
 
 	req.qp_flags = cpu_to_le32(qp_flags);
@@ -1464,6 +1464,7 @@ int bnxt_qplib_query_qp(struct bnxt_qplib_res *res, struct bnxt_qplib_qp *qp)
 	qp->access = sb->access;
 	qp->pkey_index = le16_to_cpu(sb->pkey);
 	qp->qkey = le32_to_cpu(sb->qkey);
+	qp->udp_sport = le16_to_cpu(sb->udp_src_port);
 
 	temp32[0] = le32_to_cpu(sb->dgid[0]);
 	temp32[1] = le32_to_cpu(sb->dgid[1]);
@@ -1722,9 +1723,9 @@ static void bnxt_qplib_fill_psn_search(struct bnxt_qplib_qp *qp,
 	}
 }
 
-static int bnxt_qplib_put_inline(struct bnxt_qplib_qp *qp,
-				 struct bnxt_qplib_swqe *wqe,
-				 u16 *idx)
+static unsigned int bnxt_qplib_put_inline(struct bnxt_qplib_qp *qp,
+					  struct bnxt_qplib_swqe *wqe,
+					  u32 *idx)
 {
 	struct bnxt_qplib_hwq *hwq;
 	int len, t_len, offt;
@@ -1741,7 +1742,7 @@ static int bnxt_qplib_put_inline(struct bnxt_qplib_qp *qp,
 		il_src = (void *)wqe->sg_list[indx].addr;
 		t_len += len;
 		if (t_len > qp->max_inline_data)
-			return -ENOMEM;
+			return BNXT_RE_INVAL_MSG_SIZE;
 		while (len) {
 			if (pull_dst) {
 				pull_dst = false;
@@ -1767,9 +1768,9 @@ static int bnxt_qplib_put_inline(struct bnxt_qplib_qp *qp,
 	return t_len;
 }
 
-static u32 bnxt_qplib_put_sges(struct bnxt_qplib_hwq *hwq,
-			       struct bnxt_qplib_sge *ssge,
-			       u16 nsge, u16 *idx)
+static unsigned int bnxt_qplib_put_sges(struct bnxt_qplib_hwq *hwq,
+					struct bnxt_qplib_sge *ssge,
+					u32 nsge, u32 *idx)
 {
 	struct sq_sge *dsge;
 	int indx, len = 0;
@@ -1850,14 +1851,12 @@ int bnxt_qplib_post_send(struct bnxt_qplib_qp *qp,
 	struct bnxt_qplib_hwq *hwq;
 	struct bnxt_qplib_swq *swq;
 	bool sch_handler = false;
+	u32 wqe_idx, slots, idx;
 	u16 wqe_sz, qdf = 0;
 	bool msn_update;
 	void *base_hdr;
 	void *ext_hdr;
 	__le32 temp32;
-	u32 wqe_idx;
-	u32 slots;
-	u16 idx;
 
 	hwq = &sq->hwq;
 	if (qp->state != CMDQ_MODIFY_QP_NEW_STATE_RTS &&
@@ -1909,8 +1908,10 @@ int bnxt_qplib_post_send(struct bnxt_qplib_qp *qp,
 	else
 		data_len = bnxt_qplib_put_sges(hwq, wqe->sg_list, wqe->num_sge,
 					       &idx);
-	if (data_len < 0)
-		goto queue_err;
+	if (data_len > BNXT_RE_MAX_MSG_SIZE) {
+		rc = -EINVAL;
+		goto done;
+	}
 	/* Make sure we update MSN table only for wired wqes */
 	msn_update = true;
 	/* Specifics */
@@ -2111,8 +2112,8 @@ int bnxt_qplib_post_recv(struct bnxt_qplib_qp *qp,
 	struct bnxt_qplib_hwq *hwq;
 	struct bnxt_qplib_swq *swq;
 	bool sch_handler = false;
-	u16 wqe_sz, idx;
-	u32 wqe_idx;
+	u32 wqe_idx, idx;
+	u16 wqe_sz;
 	int rc = 0;
 
 	hwq = &rq->hwq;
@@ -2219,7 +2220,8 @@ int bnxt_qplib_create_cq(struct bnxt_qplib_res *res, struct bnxt_qplib_cq *cq)
 	req.cq_handle = cpu_to_le64(cq->cq_handle);
 	req.cq_size = cpu_to_le32(cq->max_wqe);
 
-	if (_is_cq_coalescing_supported(res->dattr->dev_cap_flags2)) {
+	if (_is_cq_coalescing_supported(res->dattr->dev_cap_flags2) &&
+	    cq->coalescing->enable) {
 		req.flags |= cpu_to_le16(CMDQ_CREATE_CQ_FLAGS_COALESCING_VALID);
 		coalescing |= ((cq->coalescing->buf_maxtime <<
 				CMDQ_CREATE_CQ_BUF_MAXTIME_SFT) &
