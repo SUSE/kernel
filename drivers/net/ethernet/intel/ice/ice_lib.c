@@ -1435,6 +1435,10 @@ static int ice_vsi_alloc_rings(struct ice_vsi *vsi)
 		ring->dev = dev;
 		ring->count = vsi->num_rx_desc;
 		ring->cached_phctime = pf->ptp.cached_phc_time;
+
+		if (ice_is_feature_supported(pf, ICE_F_GCS))
+			ring->flags |= ICE_RX_FLAGS_RING_GCS;
+
 		WRITE_ONCE(vsi->rx_rings[i], ring);
 	}
 
@@ -1779,9 +1783,8 @@ void ice_update_eth_stats(struct ice_vsi *vsi)
  * @prio: priority for the RXDID for this queue
  * @ena_ts: true to enable timestamp and false to disable timestamp
  */
-void
-ice_write_qrxflxp_cntxt(struct ice_hw *hw, u16 pf_q, u32 rxdid, u32 prio,
-			bool ena_ts)
+void ice_write_qrxflxp_cntxt(struct ice_hw *hw, u16 pf_q, u32 rxdid, u32 prio,
+			     bool ena_ts)
 {
 	int regval = rd32(hw, QRXFLXP_CNTXT(pf_q));
 
@@ -2066,12 +2069,15 @@ static void ice_vsi_set_tc_cfg(struct ice_vsi *vsi)
 }
 
 /**
- * ice_cfg_sw_lldp - Config switch rules for LLDP packet handling
+ * ice_vsi_cfg_sw_lldp - Config switch rules for LLDP packet handling
  * @vsi: the VSI being configured
  * @tx: bool to determine Tx or Rx rule
  * @create: bool to determine create or remove Rule
+ *
+ * Adding an ethtype Tx rule to the uplink VSI results in it being applied
+ * to the whole port, so LLDP transmission for VFs will be blocked too.
  */
-void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
+void ice_vsi_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 {
 	int (*eth_fltr)(struct ice_vsi *v, u16 type, u16 flag,
 			enum ice_sw_fwd_act_type act);
@@ -2086,19 +2092,59 @@ void ice_cfg_sw_lldp(struct ice_vsi *vsi, bool tx, bool create)
 		status = eth_fltr(vsi, ETH_P_LLDP, ICE_FLTR_TX,
 				  ICE_DROP_PACKET);
 	} else {
-		if (ice_fw_supports_lldp_fltr_ctrl(&pf->hw)) {
-			status = ice_lldp_fltr_add_remove(&pf->hw, vsi->vsi_num,
-							  create);
-		} else {
+		if (!test_bit(ICE_FLAG_LLDP_AQ_FLTR, pf->flags)) {
 			status = eth_fltr(vsi, ETH_P_LLDP, ICE_FLTR_RX,
 					  ICE_FWD_TO_VSI);
+			if (!status || !create)
+				goto report;
+
+			dev_info(dev,
+				 "Failed to add generic LLDP Rx filter on VSI %i error: %d, falling back to specialized AQ control\n",
+				 vsi->vsi_num, status);
 		}
+
+		status = ice_lldp_fltr_add_remove(&pf->hw, vsi, create);
+		if (!status)
+			set_bit(ICE_FLAG_LLDP_AQ_FLTR, pf->flags);
+
 	}
 
+report:
 	if (status)
-		dev_dbg(dev, "Fail %s %s LLDP rule on VSI %i error: %d\n",
-			create ? "adding" : "removing", tx ? "TX" : "RX",
-			vsi->vsi_num, status);
+		dev_warn(dev, "Failed to %s %s LLDP rule on VSI %i error: %d\n",
+			 create ? "add" : "remove", tx ? "Tx" : "Rx",
+			 vsi->vsi_num, status);
+}
+
+/**
+ * ice_cfg_sw_rx_lldp - Enable/disable software handling of LLDP
+ * @pf: the PF being configured
+ * @enable: enable or disable
+ *
+ * Configure switch rules to enable/disable LLDP handling by software
+ * across PF.
+ */
+void ice_cfg_sw_rx_lldp(struct ice_pf *pf, bool enable)
+{
+	struct ice_vsi *vsi;
+	struct ice_vf *vf;
+	unsigned int bkt;
+
+	vsi = ice_get_main_vsi(pf);
+	ice_vsi_cfg_sw_lldp(vsi, false, enable);
+
+	if (!test_bit(ICE_FLAG_SRIOV_ENA, pf->flags))
+		return;
+
+	ice_for_each_vf(pf, bkt, vf) {
+		vsi = ice_get_vf_vsi(vf);
+
+		if (WARN_ON(!vsi))
+			continue;
+
+		if (ice_vf_is_lldp_ena(vf))
+			ice_vsi_cfg_sw_lldp(vsi, false, enable);
+	}
 }
 
 /**
@@ -2529,7 +2575,7 @@ ice_vsi_setup(struct ice_pf *pf, struct ice_vsi_cfg_params *params)
 	if (!ice_is_safe_mode(pf) && vsi->type == ICE_VSI_PF) {
 		ice_fltr_add_eth(vsi, ETH_P_PAUSE, ICE_FLTR_TX,
 				 ICE_DROP_PACKET);
-		ice_cfg_sw_lldp(vsi, true, true);
+		ice_vsi_cfg_sw_lldp(vsi, true, true);
 	}
 
 	if (!vsi->agg_node)
@@ -2826,9 +2872,11 @@ int ice_vsi_release(struct ice_vsi *vsi)
 	/* The Rx rule will only exist to remove if the LLDP FW
 	 * engine is currently stopped
 	 */
-	if (!ice_is_safe_mode(pf) && vsi->type == ICE_VSI_PF &&
-	    !test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags))
-		ice_cfg_sw_lldp(vsi, false, false);
+	if (!ice_is_safe_mode(pf) &&
+	    !test_bit(ICE_FLAG_FW_LLDP_AGENT, pf->flags) &&
+	    (vsi->type == ICE_VSI_PF || (vsi->type == ICE_VSI_VF &&
+	     ice_vf_is_lldp_ena(vsi->vf))))
+		ice_vsi_cfg_sw_lldp(vsi, false, false);
 
 	ice_vsi_decfg(vsi);
 
@@ -3904,8 +3952,10 @@ void ice_init_feature_support(struct ice_pf *pf)
 		break;
 	}
 
-	if (pf->hw.mac_type == ICE_MAC_E830)
+	if (pf->hw.mac_type == ICE_MAC_E830) {
 		ice_set_feature_support(pf, ICE_F_MBX_LIMIT);
+		ice_set_feature_support(pf, ICE_F_GCS);
+	}
 }
 
 /**

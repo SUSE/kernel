@@ -58,6 +58,7 @@ struct mlx5_flow_definer {
 enum mlx5_flow_resource_owner {
 	MLX5_FLOW_RESOURCE_OWNER_FW,
 	MLX5_FLOW_RESOURCE_OWNER_SW,
+	MLX5_FLOW_RESOURCE_OWNER_HWS,
 };
 
 struct mlx5_modify_hdr {
@@ -115,7 +116,9 @@ enum fs_flow_table_type {
 	FS_FT_PORT_SEL		= 0X9,
 	FS_FT_FDB_RX		= 0xa,
 	FS_FT_FDB_TX		= 0xb,
-	FS_FT_MAX_TYPE = FS_FT_FDB_TX,
+	FS_FT_RDMA_TRANSPORT_RX	= 0xd,
+	FS_FT_RDMA_TRANSPORT_TX	= 0xe,
+	FS_FT_MAX_TYPE = FS_FT_RDMA_TRANSPORT_TX,
 };
 
 enum fs_flow_table_op_mod {
@@ -158,6 +161,10 @@ struct mlx5_flow_steering {
 	struct mlx5_flow_root_namespace	*port_sel_root_ns;
 	int esw_egress_acl_vports;
 	int esw_ingress_acl_vports;
+	struct mlx5_flow_root_namespace **rdma_transport_rx_root_ns;
+	struct mlx5_flow_root_namespace **rdma_transport_tx_root_ns;
+	int rdma_transport_rx_vports;
+	int rdma_transport_tx_vports;
 };
 
 struct fs_node {
@@ -381,6 +388,9 @@ u32 mlx5_fs_get_capabilities(struct mlx5_core_dev *dev, enum mlx5_flow_namespace
 
 struct mlx5_flow_root_namespace *find_root(struct fs_node *node);
 
+int mlx5_fs_get_packet_reformat_id(struct mlx5_pkt_reformat *pkt_reformat,
+				   u32 *id);
+
 #define fs_get_obj(v, _node)  {v = container_of((_node), typeof(*v), node); }
 
 #define fs_list_for_each_entry(pos, root)		\
@@ -429,7 +439,9 @@ struct mlx5_flow_root_namespace *find_root(struct fs_node *node);
 	(type == FS_FT_PORT_SEL) ? MLX5_CAP_FLOWTABLE_PORT_SELECTION(mdev, cap) :      \
 	(type == FS_FT_FDB_RX) ? MLX5_CAP_ESW_FLOWTABLE_FDB(mdev, cap) :      \
 	(type == FS_FT_FDB_TX) ? MLX5_CAP_ESW_FLOWTABLE_FDB(mdev, cap) :      \
-	(BUILD_BUG_ON_ZERO(FS_FT_FDB_TX != FS_FT_MAX_TYPE))\
+	(type == FS_FT_RDMA_TRANSPORT_RX) ? MLX5_CAP_FLOWTABLE_RDMA_TRANSPORT_RX(mdev, cap) :      \
+	(type == FS_FT_RDMA_TRANSPORT_TX) ? MLX5_CAP_FLOWTABLE_RDMA_TRANSPORT_TX(mdev, cap) :      \
+	(BUILD_BUG_ON_ZERO(FS_FT_RDMA_TRANSPORT_TX != FS_FT_MAX_TYPE))\
 	)
 
 #endif

@@ -3325,22 +3325,8 @@ static irqreturn_t ice_misc_intr(int __always_unused irq, void *data)
 
 	if (oicr & PFINT_OICR_TSYN_TX_M) {
 		ena_mask &= ~PFINT_OICR_TSYN_TX_M;
-		if (ice_pf_state_is_nominal(pf) &&
-		    pf->hw.dev_caps.ts_dev_info.ts_ll_int_read) {
-			struct ice_ptp_tx *tx = &pf->ptp.port.tx;
-			unsigned long flags;
-			u8 idx;
 
-			spin_lock_irqsave(&tx->lock, flags);
-			idx = find_next_bit_wrap(tx->in_use, tx->len,
-						 tx->last_ll_ts_idx_read + 1);
-			if (idx != tx->len)
-				ice_ptp_req_tx_single_tstamp(tx, idx);
-			spin_unlock_irqrestore(&tx->lock, flags);
-		} else if (ice_ptp_pf_handles_tx_interrupt(pf)) {
-			set_bit(ICE_MISC_THREAD_TX_TSTAMP, pf->misc_thread);
-			ret = IRQ_WAKE_THREAD;
-		}
+		ret = ice_ptp_ts_irq(pf);
 	}
 
 	if (oicr & PFINT_OICR_TSYN_EVNT_M) {
@@ -3709,6 +3695,12 @@ void ice_set_netdev_features(struct net_device *netdev)
 	 * be changed at runtime
 	 */
 	netdev->hw_features |= NETIF_F_RXFCS;
+
+	/* Mutual exclusivity for TSO and GCS is enforced by the set features
+	 * ndo callback.
+	 */
+	if (ice_is_feature_supported(pf, ICE_F_GCS))
+		netdev->hw_features |= NETIF_F_HW_CSUM;
 
 	netif_set_tso_max_size(netdev, ICE_MAX_TSO_SIZE);
 }
@@ -4087,8 +4079,7 @@ static void ice_set_pf_caps(struct ice_pf *pf)
 	}
 
 	clear_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags);
-	if (func_caps->common_cap.ieee_1588 &&
-	    !(pf->hw.mac_type == ICE_MAC_E830))
+	if (func_caps->common_cap.ieee_1588)
 		set_bit(ICE_FLAG_PTP_SUPPORTED, pf->flags);
 
 	pf->max_pf_txqs = func_caps->common_cap.num_txq;
@@ -5113,6 +5104,12 @@ static int ice_init(struct ice_pf *pf)
 	err = ice_init_dev(pf);
 	if (err)
 		return err;
+
+	if (pf->hw.mac_type == ICE_MAC_E830) {
+		err = pci_enable_ptm(pf->pdev, NULL);
+		if (err)
+			dev_dbg(ice_pf_to_dev(pf), "PCIe PTM not supported by PCIe bus/controller\n");
+	}
 
 	err = ice_alloc_vsis(pf);
 	if (err)
@@ -6625,6 +6622,18 @@ ice_set_features(struct net_device *netdev, netdev_features_t features)
 
 	if (changed & NETIF_F_LOOPBACK)
 		ret = ice_set_loopback(vsi, !!(features & NETIF_F_LOOPBACK));
+
+	/* Due to E830 hardware limitations, TSO (NETIF_F_ALL_TSO) with GCS
+	 * (NETIF_F_HW_CSUM) is not supported.
+	 */
+	if (ice_is_feature_supported(pf, ICE_F_GCS) &&
+	    ((features & NETIF_F_HW_CSUM) && (features & NETIF_F_ALL_TSO))) {
+		if (netdev->features & NETIF_F_HW_CSUM)
+			dev_err(ice_pf_to_dev(pf), "To enable TSO, you must first disable HW checksum.\n");
+		else
+			dev_err(ice_pf_to_dev(pf), "To enable HW checksum, you must first disable TSO.\n");
+		return -EIO;
+	}
 
 	return ret;
 }
@@ -8389,11 +8398,16 @@ void ice_tx_timeout(struct net_device *netdev, unsigned int txqueue)
  * @np: net device to configure
  * @filter_dev: device on which filter is added
  * @cls_flower: offload data
+ * @ingress: if the rule is added to an ingress block
+ *
+ * Return: 0 if the flower was successfully added or deleted,
+ *	   negative error code otherwise.
  */
 static int
 ice_setup_tc_cls_flower(struct ice_netdev_priv *np,
 			struct net_device *filter_dev,
-			struct flow_cls_offload *cls_flower)
+			struct flow_cls_offload *cls_flower,
+			bool ingress)
 {
 	struct ice_vsi *vsi = np->vsi;
 
@@ -8402,7 +8416,7 @@ ice_setup_tc_cls_flower(struct ice_netdev_priv *np,
 
 	switch (cls_flower->command) {
 	case FLOW_CLS_REPLACE:
-		return ice_add_cls_flower(filter_dev, vsi, cls_flower);
+		return ice_add_cls_flower(filter_dev, vsi, cls_flower, ingress);
 	case FLOW_CLS_DESTROY:
 		return ice_del_cls_flower(vsi, cls_flower);
 	default:
@@ -8411,20 +8425,46 @@ ice_setup_tc_cls_flower(struct ice_netdev_priv *np,
 }
 
 /**
- * ice_setup_tc_block_cb - callback handler registered for TC block
+ * ice_setup_tc_block_cb_ingress - callback handler for ingress TC block
  * @type: TC SETUP type
  * @type_data: TC flower offload data that contains user input
  * @cb_priv: netdev private data
+ *
+ * Return: 0 if the setup was successful, negative error code otherwise.
  */
 static int
-ice_setup_tc_block_cb(enum tc_setup_type type, void *type_data, void *cb_priv)
+ice_setup_tc_block_cb_ingress(enum tc_setup_type type, void *type_data,
+			      void *cb_priv)
 {
 	struct ice_netdev_priv *np = cb_priv;
 
 	switch (type) {
 	case TC_SETUP_CLSFLOWER:
 		return ice_setup_tc_cls_flower(np, np->vsi->netdev,
-					       type_data);
+					       type_data, true);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+/**
+ * ice_setup_tc_block_cb_egress - callback handler for egress TC block
+ * @type: TC SETUP type
+ * @type_data: TC flower offload data that contains user input
+ * @cb_priv: netdev private data
+ *
+ * Return: 0 if the setup was successful, negative error code otherwise.
+ */
+static int
+ice_setup_tc_block_cb_egress(enum tc_setup_type type, void *type_data,
+			     void *cb_priv)
+{
+	struct ice_netdev_priv *np = cb_priv;
+
+	switch (type) {
+	case TC_SETUP_CLSFLOWER:
+		return ice_setup_tc_cls_flower(np, np->vsi->netdev,
+					       type_data, false);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -9369,17 +9409,33 @@ ice_setup_tc(struct net_device *netdev, enum tc_setup_type type,
 	     void *type_data)
 {
 	struct ice_netdev_priv *np = netdev_priv(netdev);
+	enum flow_block_binder_type binder_type;
 	struct iidc_rdma_core_dev_info *cdev;
 	struct ice_pf *pf = np->vsi->back;
+	flow_setup_cb_t *flower_handler;
 	bool locked = false;
 	int err;
 
 	switch (type) {
 	case TC_SETUP_BLOCK:
+		binder_type =
+			((struct flow_block_offload *)type_data)->binder_type;
+
+		switch (binder_type) {
+		case FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS:
+			flower_handler = ice_setup_tc_block_cb_ingress;
+			break;
+		case FLOW_BLOCK_BINDER_TYPE_CLSACT_EGRESS:
+			flower_handler = ice_setup_tc_block_cb_egress;
+			break;
+		default:
+			return -EOPNOTSUPP;
+		}
+
 		return flow_block_cb_setup_simple(type_data,
 						  &ice_block_cb_list,
-						  ice_setup_tc_block_cb,
-						  np, np, true);
+						  flower_handler,
+						  np, np, false);
 	case TC_SETUP_QDISC_MQPRIO:
 		if (ice_is_eswitch_mode_switchdev(pf)) {
 			netdev_err(netdev, "TC MQPRIO offload not supported, switchdev is enabled\n");
@@ -9441,7 +9497,7 @@ ice_indr_setup_block_cb(enum tc_setup_type type, void *type_data,
 	case TC_SETUP_CLSFLOWER:
 		return ice_setup_tc_cls_flower(np, priv->netdev,
 					       (struct flow_cls_offload *)
-					       type_data);
+					       type_data, false);
 	default:
 		return -EOPNOTSUPP;
 	}

@@ -89,7 +89,7 @@ static void auto_mode_init_counter(struct rdma_counter *counter,
 }
 
 static int __rdma_counter_bind_qp(struct rdma_counter *counter,
-				  struct ib_qp *qp)
+				  struct ib_qp *qp, u32 port)
 {
 	int ret;
 
@@ -100,7 +100,7 @@ static int __rdma_counter_bind_qp(struct rdma_counter *counter,
 		return -EOPNOTSUPP;
 
 	mutex_lock(&counter->lock);
-	ret = qp->device->ops.counter_bind_qp(counter, qp);
+	ret = qp->device->ops.counter_bind_qp(counter, qp, port);
 	mutex_unlock(&counter->lock);
 
 	return ret;
@@ -149,12 +149,14 @@ static struct rdma_counter *alloc_and_bind(struct ib_device *dev, u32 port,
 	if (!dev->ops.counter_dealloc || !dev->ops.counter_alloc_stats)
 		return NULL;
 
-	counter = kzalloc(sizeof(*counter), GFP_KERNEL);
+	counter = rdma_zalloc_drv_obj(dev, rdma_counter);
 	if (!counter)
 		return NULL;
 
 	counter->device    = dev;
 	counter->port      = port;
+
+	dev->ops.counter_init(counter);
 
 	rdma_restrack_new(&counter->res, RDMA_RESTRACK_COUNTER);
 	counter->stats = dev->ops.counter_alloc_stats(counter);
@@ -188,7 +190,7 @@ static struct rdma_counter *alloc_and_bind(struct ib_device *dev, u32 port,
 	kref_init(&counter->kref);
 	mutex_init(&counter->lock);
 
-	ret = __rdma_counter_bind_qp(counter, qp);
+	ret = __rdma_counter_bind_qp(counter, qp, port);
 	if (ret)
 		goto err_mode;
 
@@ -238,7 +240,7 @@ static bool auto_mode_match(struct ib_qp *qp, struct rdma_counter *counter,
 	return match;
 }
 
-static int __rdma_counter_unbind_qp(struct ib_qp *qp)
+static int __rdma_counter_unbind_qp(struct ib_qp *qp, u32 port)
 {
 	struct rdma_counter *counter = qp->counter;
 	int ret;
@@ -247,7 +249,7 @@ static int __rdma_counter_unbind_qp(struct ib_qp *qp)
 		return -EOPNOTSUPP;
 
 	mutex_lock(&counter->lock);
-	ret = qp->device->ops.counter_unbind_qp(qp);
+	ret = qp->device->ops.counter_unbind_qp(qp, port);
 	mutex_unlock(&counter->lock);
 
 	return ret;
@@ -339,7 +341,7 @@ int rdma_counter_bind_qp_auto(struct ib_qp *qp, u32 port)
 
 	counter = rdma_get_counter_auto_mode(qp, port);
 	if (counter) {
-		ret = __rdma_counter_bind_qp(counter, qp);
+		ret = __rdma_counter_bind_qp(counter, qp, port);
 		if (ret) {
 			kref_put(&counter->kref, counter_release);
 			return ret;
@@ -358,7 +360,7 @@ int rdma_counter_bind_qp_auto(struct ib_qp *qp, u32 port)
  * @force:
  *   true - Decrease the counter ref-count anyway (e.g., qp destroy)
  */
-int rdma_counter_unbind_qp(struct ib_qp *qp, bool force)
+int rdma_counter_unbind_qp(struct ib_qp *qp, u32 port, bool force)
 {
 	struct rdma_counter *counter = qp->counter;
 	int ret;
@@ -366,7 +368,7 @@ int rdma_counter_unbind_qp(struct ib_qp *qp, bool force)
 	if (!counter)
 		return -EINVAL;
 
-	ret = __rdma_counter_unbind_qp(qp);
+	ret = __rdma_counter_unbind_qp(qp, port);
 	if (ret && !force)
 		return ret;
 
@@ -513,7 +515,7 @@ int rdma_counter_bind_qpn(struct ib_device *dev, u32 port,
 		goto err_task;
 	}
 
-	ret = __rdma_counter_bind_qp(counter, qp);
+	ret = __rdma_counter_bind_qp(counter, qp, port);
 	if (ret)
 		goto err_task;
 
@@ -604,7 +606,7 @@ int rdma_counter_unbind_qpn(struct ib_device *dev, u32 port,
 		goto out;
 	}
 
-	ret = rdma_counter_unbind_qp(qp, false);
+	ret = rdma_counter_unbind_qp(qp, port, false);
 
 out:
 	rdma_restrack_put(&qp->res);
