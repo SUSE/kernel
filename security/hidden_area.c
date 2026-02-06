@@ -13,6 +13,7 @@
 #include <linux/mm.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
+#include <linux/security.h>
 #include <linux/string.h>
 #include <crypto/aes.h>
 #include <crypto/skcipher.h>
