@@ -5094,6 +5094,9 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	if (!prove_locking || lock->key == &__lockdep_no_validate__)
 		check = 0;
 
+	if (DEBUG_LOCKS_WARN_ON(subclass >= MAX_LOCKDEP_SUBCLASSES))
+		return 0;
+
 	if (subclass < NR_LOCKDEP_CACHING_CLASSES)
 		class = lock->class_cache[subclass];
 	/*
