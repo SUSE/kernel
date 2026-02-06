@@ -149,12 +149,12 @@ void dst_dev_put(struct dst_entry *dst)
 {
 	struct net_device *dev = dst->dev;
 
-	dst->obsolete = DST_OBSOLETE_DEAD;
+	WRITE_ONCE(dst->obsolete, DST_OBSOLETE_DEAD);
 	if (dst->ops->ifdown)
 		dst->ops->ifdown(dst, dev, true);
-	dst->input = dst_discard;
-	dst->output = dst_discard_out;
-	dst->dev = blackhole_netdev;
+	WRITE_ONCE(dst->input, dst_discard);
+	WRITE_ONCE(dst->output, dst_discard_out);
+	rcu_assign_pointer(dst->dev_rcu, blackhole_netdev);
 	dev_hold(dst->dev);
 	dev_put(dev);
 }
