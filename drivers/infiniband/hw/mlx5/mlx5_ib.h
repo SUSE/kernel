@@ -276,6 +276,7 @@ struct mlx5_ib_flow_matcher {
 	struct mlx5_core_dev	*mdev;
 	atomic_t		usecnt;
 	u8			match_criteria_enable;
+	u32			ib_port;
 };
 
 struct mlx5_ib_steering_anchor {
@@ -298,6 +299,14 @@ enum mlx5_ib_optional_counter_type {
 	MLX5_IB_OPCOUNTER_RDMA_RX_PACKETS,
 	MLX5_IB_OPCOUNTER_RDMA_RX_BYTES,
 
+	MLX5_IB_OPCOUNTER_CC_RX_CE_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_CC_RX_CNP_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_CC_TX_CNP_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_TX_PACKETS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_TX_BYTES_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_RX_PACKETS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_RX_BYTES_PER_QP,
+
 	MLX5_IB_OPCOUNTER_MAX,
 };
 
@@ -311,6 +320,8 @@ struct mlx5_ib_flow_db {
 	struct mlx5_ib_flow_prio	rdma_tx[MLX5_IB_NUM_FLOW_FT];
 	struct mlx5_ib_flow_prio	opfcs[MLX5_IB_OPCOUNTER_MAX];
 	struct mlx5_flow_table		*lag_demux_ft;
+	struct mlx5_ib_flow_prio        *rdma_transport_rx;
+	struct mlx5_ib_flow_prio        *rdma_transport_tx;
 	/* Protect flow steering bypass flow tables
 	 * when add/del flow rules.
 	 * only single add/removal of flow steering rule could be done
@@ -888,6 +899,14 @@ void mlx5_ib_fs_remove_op_fc(struct mlx5_ib_dev *dev,
 			     struct mlx5_ib_op_fc *opfc,
 			     enum mlx5_ib_optional_counter_type type);
 
+int mlx5r_fs_bind_op_fc(struct ib_qp *qp, struct rdma_counter *counter,
+			u32 port);
+
+void mlx5r_fs_unbind_op_fc(struct ib_qp *qp, struct rdma_counter *counter);
+
+void mlx5r_fs_destroy_fcs(struct mlx5_ib_dev *dev,
+			  struct rdma_counter *counter);
+
 struct mlx5_ib_multiport_info;
 
 struct mlx5_ib_multiport {
@@ -987,7 +1006,6 @@ enum mlx5_ib_stages {
 	MLX5_IB_STAGE_ODP,
 	MLX5_IB_STAGE_COUNTERS,
 	MLX5_IB_STAGE_CONG_DEBUGFS,
-	MLX5_IB_STAGE_UAR,
 	MLX5_IB_STAGE_BFREG,
 	MLX5_IB_STAGE_PRE_IB_REG_UMR,
 	MLX5_IB_STAGE_WHITELIST_UID,

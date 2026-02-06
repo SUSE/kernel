@@ -1609,7 +1609,7 @@ int be_cmd_get_stats(struct be_adapter *adapter, struct be_dma_mem *nonemb_cmd)
 	/* version 1 of the cmd is not supported only by BE2 */
 	if (BE2_chip(adapter))
 		hdr->version = 0;
-	if (BE3_chip(adapter) || lancer_chip(adapter))
+	else if (BE3_chip(adapter) || lancer_chip(adapter))
 		hdr->version = 1;
 	else
 		hdr->version = 2;
@@ -2615,7 +2615,11 @@ err:
 	return status;
 }
 
-static char flash_cookie[2][16] = {"*** SE FLAS", "H DIRECTORY *** "};
+/*
+ * Since the cookie is text, add a parsing-skipped space to keep it from
+ * ever being matched on storage holding this source file.
+ */
+static const char flash_cookie[32] __nonstring = "*** SE FLAS" "H DIRECTORY *** ";
 
 static bool phy_flashing_required(struct be_adapter *adapter)
 {
@@ -3797,6 +3801,7 @@ int be_cmd_get_perm_mac(struct be_adapter *adapter, u8 *mac)
 {
 	int status;
 	bool pmac_valid = false;
+	u32 pmac_id;
 
 	eth_zero_addr(mac);
 
@@ -3809,7 +3814,7 @@ int be_cmd_get_perm_mac(struct be_adapter *adapter, u8 *mac)
 						       adapter->if_handle, 0);
 	} else {
 		status = be_cmd_get_mac_from_list(adapter, mac, &pmac_valid,
-						  NULL, adapter->if_handle, 0);
+						  &pmac_id, adapter->if_handle, 0);
 	}
 
 	return status;

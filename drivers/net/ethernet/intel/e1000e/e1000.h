@@ -64,7 +64,7 @@ struct e1000_info;
 #define AUTO_ALL_MODES			0
 #define E1000_EEPROM_APME		0x0400
 
-#define E1000_MNG_VLAN_NONE		(-1)
+#define E1000_MNG_VLAN_NONE		0xFFFF
 
 #define DEFAULT_JUMBO			9234
 
@@ -461,6 +461,7 @@ s32 e1000e_get_base_timinca(struct e1000_adapter *adapter, u32 *timinca);
 #define FLAG2_CHECK_RX_HWTSTAMP           BIT(13)
 #define FLAG2_CHECK_SYSTIM_OVERFLOW       BIT(14)
 #define FLAG2_ENABLE_S0IX_FLOWS           BIT(15)
+#define FLAG2_DISABLE_K1		   BIT(16)
 
 #define E1000_RX_DESC_PS(R, i)	    \
 	(&(((union e1000_rx_desc_packet_split *)((R).desc))[i]))
