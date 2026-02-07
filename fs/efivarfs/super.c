@@ -371,6 +371,8 @@ static int efivarfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	if (err)
 		return err;
 
+	register_pm_notifier(&sfi->pm_nb);
+
 	return efivar_init(efivarfs_callback, sb, true);
 }
 
@@ -562,7 +564,6 @@ static int efivarfs_init_fs_context(struct fs_context *fc)
 
 	sfi->pm_nb.notifier_call = efivarfs_pm_notify;
 	sfi->pm_nb.priority = 0;
-	register_pm_notifier(&sfi->pm_nb);
 
 	return 0;
 }
