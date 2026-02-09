@@ -820,6 +820,13 @@ config ARCH_SUPPORTS_CFI_CLANG
 config ARCH_USES_CFI_TRAPS
 	bool
 
+config ARCH_USES_CFI_GENERIC_LLVM_PASS
+	bool
+	help
+	  An architecture should select this option if it uses the generic
+	  KCFIPass in LLVM to expand kCFI bundles instead of architecture-specific
+	  lowering.
+
 config CFI_CLANG
 	bool "Use Clang's Control Flow Integrity (CFI)"
 	depends on ARCH_SUPPORTS_CFI_CLANG

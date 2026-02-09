@@ -448,7 +448,7 @@ static void i40e_config_irq_link_list(struct i40e_vf *vf, u16 vsi_id,
 		    (qtype << I40E_QINT_RQCTL_NEXTQ_TYPE_SHIFT) |
 		    (pf_queue_id << I40E_QINT_RQCTL_NEXTQ_INDX_SHIFT) |
 		    BIT(I40E_QINT_RQCTL_CAUSE_ENA_SHIFT) |
-		    (itr_idx << I40E_QINT_RQCTL_ITR_INDX_SHIFT);
+		    FIELD_PREP(I40E_QINT_RQCTL_ITR_INDX_MASK, itr_idx);
 		wr32(hw, reg_idx, reg);
 	}
 
@@ -826,7 +826,7 @@ static int i40e_alloc_vsi_res(struct i40e_vf *vf, u8 idx)
 	}
 
 	if (!idx) {
-		u64 hena = i40e_pf_get_default_rss_hena(pf);
+		u64 hashcfg = i40e_pf_get_default_rss_hashcfg(pf);
 		u8 broadcast[ETH_ALEN];
 
 		vf->lan_vsi_idx = vsi->idx;
@@ -855,8 +855,9 @@ static int i40e_alloc_vsi_res(struct i40e_vf *vf, u8 idx)
 			dev_info(&pf->pdev->dev,
 				 "Could not allocate VF broadcast filter\n");
 		spin_unlock_bh(&vsi->mac_filter_hash_lock);
-		wr32(&pf->hw, I40E_VFQF_HENA1(0, vf->vf_id), (u32)hena);
-		wr32(&pf->hw, I40E_VFQF_HENA1(1, vf->vf_id), (u32)(hena >> 32));
+		wr32(&pf->hw, I40E_VFQF_HENA1(0, vf->vf_id), (u32)hashcfg);
+		wr32(&pf->hw, I40E_VFQF_HENA1(1, vf->vf_id),
+		     (u32)(hashcfg >> 32));
 		/* program mac filter only for VF VSI */
 		ret = i40e_sync_vsi_filters(vsi);
 		if (ret)
@@ -1303,9 +1304,8 @@ i40e_set_vsi_promisc(struct i40e_vf *vf, u16 seid, bool multi_enable,
 
 			dev_err(&pf->pdev->dev,
 				"VF %d failed to set multicast promiscuous mode err %pe aq_err %s\n",
-				vf->vf_id,
-				ERR_PTR(aq_ret),
-				i40e_aq_str(&pf->hw, aq_err));
+				vf->vf_id, ERR_PTR(aq_ret),
+				libie_aq_str(aq_err));
 
 			return aq_ret;
 		}
@@ -1319,9 +1319,8 @@ i40e_set_vsi_promisc(struct i40e_vf *vf, u16 seid, bool multi_enable,
 
 			dev_err(&pf->pdev->dev,
 				"VF %d failed to set unicast promiscuous mode err %pe aq_err %s\n",
-				vf->vf_id,
-				ERR_PTR(aq_ret),
-				i40e_aq_str(&pf->hw, aq_err));
+				vf->vf_id, ERR_PTR(aq_ret),
+				libie_aq_str(aq_err));
 		}
 
 		return aq_ret;
@@ -1336,9 +1335,8 @@ i40e_set_vsi_promisc(struct i40e_vf *vf, u16 seid, bool multi_enable,
 
 			dev_err(&pf->pdev->dev,
 				"VF %d failed to set multicast promiscuous mode err %pe aq_err %s\n",
-				vf->vf_id,
-				ERR_PTR(aq_ret),
-				i40e_aq_str(&pf->hw, aq_err));
+				vf->vf_id, ERR_PTR(aq_ret),
+				libie_aq_str(aq_err));
 
 			if (!aq_tmp)
 				aq_tmp = aq_ret;
@@ -1352,9 +1350,8 @@ i40e_set_vsi_promisc(struct i40e_vf *vf, u16 seid, bool multi_enable,
 
 			dev_err(&pf->pdev->dev,
 				"VF %d failed to set unicast promiscuous mode err %pe aq_err %s\n",
-				vf->vf_id,
-				ERR_PTR(aq_ret),
-				i40e_aq_str(&pf->hw, aq_err));
+				vf->vf_id, ERR_PTR(aq_ret),
+				libie_aq_str(aq_err));
 
 			if (!aq_tmp)
 				aq_tmp = aq_ret;
@@ -2865,24 +2862,6 @@ error_param:
 				      (u8 *)&stats, sizeof(stats));
 }
 
-/**
- * i40e_can_vf_change_mac
- * @vf: pointer to the VF info
- *
- * Return true if the VF is allowed to change its MAC filters, false otherwise
- */
-static bool i40e_can_vf_change_mac(struct i40e_vf *vf)
-{
-	/* If the VF MAC address has been set administratively (via the
-	 * ndo_set_vf_mac command), then deny permission to the VF to
-	 * add/delete unicast MAC addresses, unless the VF is trusted
-	 */
-	if (vf->pf_set_mac && !vf->trusted)
-		return false;
-
-	return true;
-}
-
 #define I40E_MAX_MACVLAN_PER_HW 3072
 #define I40E_MAX_MACVLAN_PER_PF(num_ports) (I40E_MAX_MACVLAN_PER_HW /	\
 	(num_ports))
@@ -2921,8 +2900,10 @@ static inline int i40e_check_vf_permission(struct i40e_vf *vf,
 	struct i40e_pf *pf = vf->pf;
 	struct i40e_vsi *vsi = pf->vsi[vf->lan_vsi_idx];
 	struct i40e_hw *hw = &pf->hw;
-	int mac2add_cnt = 0;
-	int i;
+	int i, mac_add_max, mac_add_cnt = 0;
+	bool vf_trusted;
+
+	vf_trusted = test_bit(I40E_VIRTCHNL_VF_CAP_PRIVILEGE, &vf->vf_caps);
 
 	for (i = 0; i < al->num_elements; i++) {
 		struct i40e_mac_filter *f;
@@ -2942,9 +2923,8 @@ static inline int i40e_check_vf_permission(struct i40e_vf *vf,
 		 * The VF may request to set the MAC address filter already
 		 * assigned to it so do not return an error in that case.
 		 */
-		if (!i40e_can_vf_change_mac(vf) &&
-		    !is_multicast_ether_addr(addr) &&
-		    !ether_addr_equal(addr, vf->default_lan_addr.addr)) {
+		if (!vf_trusted && !is_multicast_ether_addr(addr) &&
+		    vf->pf_set_mac && !ether_addr_equal(addr, vf->default_lan_addr.addr)) {
 			dev_err(&pf->pdev->dev,
 				"VF attempting to override administratively set MAC address, bring down and up the VF interface to resume normal operation\n");
 			return -EPERM;
@@ -2953,29 +2933,33 @@ static inline int i40e_check_vf_permission(struct i40e_vf *vf,
 		/*count filters that really will be added*/
 		f = i40e_find_mac(vsi, addr);
 		if (!f)
-			++mac2add_cnt;
+			++mac_add_cnt;
 	}
 
 	/* If this VF is not privileged, then we can't add more than a limited
-	 * number of addresses. Check to make sure that the additions do not
-	 * push us over the limit.
-	 */
-	if (!test_bit(I40E_VIRTCHNL_VF_CAP_PRIVILEGE, &vf->vf_caps)) {
-		if ((i40e_count_filters(vsi) + mac2add_cnt) >
-		    I40E_VC_MAX_MAC_ADDR_PER_VF) {
-			dev_err(&pf->pdev->dev,
-				"Cannot add more MAC addresses, VF is not trusted, switch the VF to trusted to add more functionality\n");
-			return -EPERM;
-		}
-	/* If this VF is trusted, it can use more resources than untrusted.
+	 * number of addresses.
+	 *
+	 * If this VF is trusted, it can use more resources than untrusted.
 	 * However to ensure that every trusted VF has appropriate number of
 	 * resources, divide whole pool of resources per port and then across
 	 * all VFs.
 	 */
-	} else {
-		if ((i40e_count_filters(vsi) + mac2add_cnt) >
-		    I40E_VC_MAX_MACVLAN_PER_TRUSTED_VF(pf->num_alloc_vfs,
-						       hw->num_ports)) {
+	if (!vf_trusted)
+		mac_add_max = I40E_VC_MAX_MAC_ADDR_PER_VF;
+	else
+		mac_add_max = I40E_VC_MAX_MACVLAN_PER_TRUSTED_VF(pf->num_alloc_vfs, hw->num_ports);
+
+	/* VF can replace all its filters in one step, in this case mac_add_max
+	 * will be added as active and another mac_add_max will be in
+	 * a to-be-removed state. Account for that.
+	 */
+	if ((i40e_count_active_filters(vsi) + mac_add_cnt) > mac_add_max ||
+	    (i40e_count_all_filters(vsi) + mac_add_cnt) > 2 * mac_add_max) {
+		if (!vf_trusted) {
+			dev_err(&pf->pdev->dev,
+				"Cannot add more MAC addresses, VF is not trusted, switch the VF to trusted to add more functionality\n");
+			return -EPERM;
+		} else {
 			dev_err(&pf->pdev->dev,
 				"Cannot add more MAC addresses, trusted VF exhausted it's resources\n");
 			return -EPERM;
@@ -3468,15 +3452,15 @@ err:
 }
 
 /**
- * i40e_vc_get_rss_hena
+ * i40e_vc_get_rss_hashcfg
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
  *
- * Return the RSS HENA bits allowed by the hardware
+ * Return the RSS Hash configuration bits allowed by the hardware
  **/
-static int i40e_vc_get_rss_hena(struct i40e_vf *vf, u8 *msg)
+static int i40e_vc_get_rss_hashcfg(struct i40e_vf *vf, u8 *msg)
 {
-	struct virtchnl_rss_hena *vrh = NULL;
+	struct virtchnl_rss_hashcfg *vrh = NULL;
 	struct i40e_pf *pf = vf->pf;
 	int aq_ret = 0;
 	int len = 0;
@@ -3485,7 +3469,7 @@ static int i40e_vc_get_rss_hena(struct i40e_vf *vf, u8 *msg)
 		aq_ret = -EINVAL;
 		goto err;
 	}
-	len = sizeof(struct virtchnl_rss_hena);
+	len = sizeof(struct virtchnl_rss_hashcfg);
 
 	vrh = kzalloc(len, GFP_KERNEL);
 	if (!vrh) {
@@ -3493,26 +3477,26 @@ static int i40e_vc_get_rss_hena(struct i40e_vf *vf, u8 *msg)
 		len = 0;
 		goto err;
 	}
-	vrh->hena = i40e_pf_get_default_rss_hena(pf);
+	vrh->hashcfg = i40e_pf_get_default_rss_hashcfg(pf);
 err:
 	/* send the response back to the VF */
-	aq_ret = i40e_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_RSS_HENA_CAPS,
+	aq_ret = i40e_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS,
 					aq_ret, (u8 *)vrh, len);
 	kfree(vrh);
 	return aq_ret;
 }
 
 /**
- * i40e_vc_set_rss_hena
+ * i40e_vc_set_rss_hashcfg
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
  *
- * Set the RSS HENA bits for the VF
+ * Set the RSS Hash configuration bits for the VF
  **/
-static int i40e_vc_set_rss_hena(struct i40e_vf *vf, u8 *msg)
+static int i40e_vc_set_rss_hashcfg(struct i40e_vf *vf, u8 *msg)
 {
-	struct virtchnl_rss_hena *vrh =
-		(struct virtchnl_rss_hena *)msg;
+	struct virtchnl_rss_hashcfg *vrh =
+		(struct virtchnl_rss_hashcfg *)msg;
 	struct i40e_pf *pf = vf->pf;
 	struct i40e_hw *hw = &pf->hw;
 	int aq_ret = 0;
@@ -3521,13 +3505,14 @@ static int i40e_vc_set_rss_hena(struct i40e_vf *vf, u8 *msg)
 		aq_ret = -EINVAL;
 		goto err;
 	}
-	i40e_write_rx_ctl(hw, I40E_VFQF_HENA1(0, vf->vf_id), (u32)vrh->hena);
+	i40e_write_rx_ctl(hw, I40E_VFQF_HENA1(0, vf->vf_id),
+			  (u32)vrh->hashcfg);
 	i40e_write_rx_ctl(hw, I40E_VFQF_HENA1(1, vf->vf_id),
-			  (u32)(vrh->hena >> 32));
+			  (u32)(vrh->hashcfg >> 32));
 
 	/* send the response to the VF */
 err:
-	return i40e_vc_send_resp_to_vf(vf, VIRTCHNL_OP_SET_RSS_HENA, aq_ret);
+	return i40e_vc_send_resp_to_vf(vf, VIRTCHNL_OP_SET_RSS_HASHCFG, aq_ret);
 }
 
 /**
@@ -3767,8 +3752,7 @@ static void i40e_del_all_cloud_filters(struct i40e_vf *vf)
 			dev_err(&pf->pdev->dev,
 				"VF %d: Failed to delete cloud filter, err %pe aq_err %s\n",
 				vf->vf_id, ERR_PTR(ret),
-				i40e_aq_str(&pf->hw,
-					    pf->hw.aq.asq_last_status));
+				libie_aq_str(pf->hw.aq.asq_last_status));
 
 		hlist_del(&cfilter->cloud_node);
 		kfree(cfilter);
@@ -3870,7 +3854,7 @@ static int i40e_vc_del_cloud_filter(struct i40e_vf *vf, u8 *msg)
 		dev_err(&pf->pdev->dev,
 			"VF %d: Failed to delete cloud filter, err %pe aq_err %s\n",
 			vf->vf_id, ERR_PTR(ret),
-			i40e_aq_str(&pf->hw, pf->hw.aq.asq_last_status));
+			libie_aq_str(pf->hw.aq.asq_last_status));
 		goto err;
 	}
 
@@ -4016,7 +4000,7 @@ static int i40e_vc_add_cloud_filter(struct i40e_vf *vf, u8 *msg)
 		dev_err(&pf->pdev->dev,
 			"VF %d: Failed to add cloud filter, err %pe aq_err %s\n",
 			vf->vf_id, ERR_PTR(aq_ret),
-			i40e_aq_str(&pf->hw, pf->hw.aq.asq_last_status));
+			libie_aq_str(pf->hw.aq.asq_last_status));
 		goto err_free;
 	}
 
@@ -4284,11 +4268,11 @@ int i40e_vc_process_vf_msg(struct i40e_pf *pf, s16 vf_id, u32 v_opcode,
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
 		ret = i40e_vc_config_rss_lut(vf, msg);
 		break;
-	case VIRTCHNL_OP_GET_RSS_HENA_CAPS:
-		ret = i40e_vc_get_rss_hena(vf, msg);
+	case VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS:
+		ret = i40e_vc_get_rss_hashcfg(vf, msg);
 		break;
-	case VIRTCHNL_OP_SET_RSS_HENA:
-		ret = i40e_vc_set_rss_hena(vf, msg);
+	case VIRTCHNL_OP_SET_RSS_HASHCFG:
+		ret = i40e_vc_set_rss_hashcfg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
 		ret = i40e_vc_enable_vlan_stripping(vf, msg);
@@ -4804,6 +4788,7 @@ int i40e_ndo_set_vf_link_state(struct net_device *netdev, int vf_id, int link)
 	unsigned long q_map;
 	struct i40e_vf *vf;
 	int abs_vf_id;
+	int old_link;
 	int ret = 0;
 	int tmp;
 
@@ -4821,6 +4806,17 @@ int i40e_ndo_set_vf_link_state(struct net_device *netdev, int vf_id, int link)
 
 	vf = &pf->vf[vf_id];
 	abs_vf_id = vf->vf_id + hw->func_caps.vf_base_id;
+
+	/* skip VF link state change if requested state is already set */
+	if (!vf->link_forced)
+		old_link = IFLA_VF_LINK_STATE_AUTO;
+	else if (vf->link_up)
+		old_link = IFLA_VF_LINK_STATE_ENABLE;
+	else
+		old_link = IFLA_VF_LINK_STATE_DISABLE;
+
+	if (link == old_link)
+		goto error_out;
 
 	pfe.event = VIRTCHNL_EVENT_LINK_CHANGE;
 	pfe.severity = PF_EVENT_SEVERITY_INFO;

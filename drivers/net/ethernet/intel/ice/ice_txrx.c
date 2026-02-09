@@ -20,7 +20,6 @@
 
 #define ICE_RX_HDR_SIZE		256
 
-#define FDIR_DESC_RXDID 0x40
 #define ICE_FDIR_CLEAN_DELAY 10
 
 /**
@@ -145,6 +144,56 @@ static struct netdev_queue *txring_txq(const struct ice_tx_ring *ring)
 }
 
 /**
+ * ice_clean_tstamp_ring - clean time stamp ring
+ * @tx_ring: Tx ring to clean the Time Stamp ring for
+ */
+static void ice_clean_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	u32 size;
+
+	if (!tstamp_ring->desc)
+		return;
+
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	memset(tstamp_ring->desc, 0, size);
+	tstamp_ring->next_to_use = 0;
+}
+
+/**
+ * ice_free_tstamp_ring - free time stamp resources per queue
+ * @tx_ring: Tx ring to free the Time Stamp ring for
+ */
+void ice_free_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	u32 size;
+
+	if (!tstamp_ring->desc)
+		return;
+
+	ice_clean_tstamp_ring(tx_ring);
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	dmam_free_coherent(tx_ring->dev, size, tstamp_ring->desc,
+			   tstamp_ring->dma);
+	tstamp_ring->desc = NULL;
+}
+
+/**
+ * ice_free_tx_tstamp_ring - free time stamp resources per Tx ring
+ * @tx_ring: Tx ring to free the Time Stamp ring for
+ */
+void ice_free_tx_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	ice_free_tstamp_ring(tx_ring);
+	kfree_rcu(tx_ring->tstamp_ring, rcu);
+	tx_ring->tstamp_ring = NULL;
+	tx_ring->flags &= ~ICE_TX_FLAGS_TXTIME;
+}
+
+/**
  * ice_clean_tx_ring - Free any empty Tx buffers
  * @tx_ring: ring to be cleaned
  */
@@ -182,6 +231,9 @@ tx_skip_free:
 
 	/* cleanup Tx queue statistics */
 	netdev_tx_reset_queue(txring_txq(tx_ring));
+
+	if (ice_is_txtime_cfg(tx_ring))
+		ice_free_tx_tstamp_ring(tx_ring);
 }
 
 /**
@@ -330,6 +382,84 @@ static bool ice_clean_tx_irq(struct ice_tx_ring *tx_ring, int napi_budget)
 	}
 
 	return !!budget;
+}
+
+/**
+ * ice_alloc_tstamp_ring - allocate the Time Stamp ring
+ * @tx_ring: Tx ring to allocate the Time Stamp ring for
+ *
+ * Return: 0 on success, negative on error
+ */
+static int ice_alloc_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring;
+
+	/* allocate with kzalloc(), free with kfree_rcu() */
+	tstamp_ring = kzalloc(sizeof(*tstamp_ring), GFP_KERNEL);
+	if (!tstamp_ring)
+		return -ENOMEM;
+
+	tstamp_ring->tx_ring = tx_ring;
+	tx_ring->tstamp_ring = tstamp_ring;
+	tstamp_ring->desc = NULL;
+	tstamp_ring->count = ice_calc_ts_ring_count(tx_ring);
+	tx_ring->flags |= ICE_TX_FLAGS_TXTIME;
+	return 0;
+}
+
+/**
+ * ice_setup_tstamp_ring - allocate the Time Stamp ring
+ * @tx_ring: Tx ring to set up the Time Stamp ring for
+ *
+ * Return: 0 on success, negative on error
+ */
+static int ice_setup_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+	struct device *dev = tx_ring->dev;
+	u32 size;
+
+	/* round up to nearest page */
+	size = ALIGN(tstamp_ring->count * sizeof(struct ice_ts_desc),
+		     PAGE_SIZE);
+	tstamp_ring->desc = dmam_alloc_coherent(dev, size, &tstamp_ring->dma,
+						GFP_KERNEL);
+	if (!tstamp_ring->desc) {
+		dev_err(dev, "Unable to allocate memory for Time stamp Ring, size=%d\n",
+			size);
+		return -ENOMEM;
+	}
+
+	tstamp_ring->next_to_use = 0;
+	return 0;
+}
+
+/**
+ * ice_alloc_setup_tstamp_ring - Allocate and setup the Time Stamp ring
+ * @tx_ring: Tx ring to allocate and setup the Time Stamp ring for
+ *
+ * Return: 0 on success, negative on error
+ */
+int ice_alloc_setup_tstamp_ring(struct ice_tx_ring *tx_ring)
+{
+	struct device *dev = tx_ring->dev;
+	int err;
+
+	err = ice_alloc_tstamp_ring(tx_ring);
+	if (err) {
+		dev_err(dev, "Unable to allocate Time stamp ring for Tx ring %d\n",
+			tx_ring->q_index);
+		return err;
+	}
+
+	err = ice_setup_tstamp_ring(tx_ring);
+	if (err) {
+		dev_err(dev, "Unable to setup Time stamp ring for Tx ring %d\n",
+			tx_ring->q_index);
+		ice_free_tx_tstamp_ring(tx_ring);
+		return err;
+	}
+	return 0;
 }
 
 /**
@@ -707,6 +837,37 @@ ice_alloc_mapped_page(struct ice_rx_ring *rx_ring, struct ice_rx_buf *bi)
 }
 
 /**
+ * ice_init_ctrl_rx_descs - Initialize Rx descriptors for control vsi.
+ * @rx_ring: ring to init descriptors on
+ * @count: number of descriptors to initialize
+ */
+void ice_init_ctrl_rx_descs(struct ice_rx_ring *rx_ring, u32 count)
+{
+	union ice_32b_rx_flex_desc *rx_desc;
+	u32 ntu = rx_ring->next_to_use;
+
+	if (!count)
+		return;
+
+	rx_desc = ICE_RX_DESC(rx_ring, ntu);
+
+	do {
+		rx_desc++;
+		ntu++;
+		if (unlikely(ntu == rx_ring->count)) {
+			rx_desc = ICE_RX_DESC(rx_ring, 0);
+			ntu = 0;
+		}
+
+		rx_desc->wb.status_error0 = 0;
+		count--;
+	} while (count);
+
+	if (rx_ring->next_to_use != ntu)
+		ice_release_rx_desc(rx_ring, ntu);
+}
+
+/**
  * ice_alloc_rx_bufs - Replace used receive buffers
  * @rx_ring: ring to place buffers on
  * @cleaned_count: number of buffers to replace
@@ -726,8 +887,7 @@ bool ice_alloc_rx_bufs(struct ice_rx_ring *rx_ring, unsigned int cleaned_count)
 	struct ice_rx_buf *bi;
 
 	/* do nothing if no valid netdev defined */
-	if ((!rx_ring->netdev && rx_ring->vsi->type != ICE_VSI_CTRL) ||
-	    !cleaned_count)
+	if (!rx_ring->netdev || !cleaned_count)
 		return false;
 
 	/* get the Rx descriptor and buffer based on next_to_use */
@@ -1002,10 +1162,9 @@ ice_build_skb(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp)
 		skb_metadata_set(skb, metasize);
 
 	if (unlikely(xdp_buff_has_frags(xdp)))
-		xdp_update_skb_shared_info(skb, nr_frags,
-					   sinfo->xdp_frags_size,
-					   nr_frags * xdp->frame_sz,
-					   xdp_buff_is_frag_pfmemalloc(xdp));
+		xdp_update_skb_frags_info(skb, nr_frags, sinfo->xdp_frags_size,
+					  nr_frags * xdp->frame_sz,
+					  xdp_buff_get_skb_flags(xdp));
 
 	return skb;
 }
@@ -1082,10 +1241,10 @@ ice_construct_skb(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp)
 		memcpy(&skinfo->frags[skinfo->nr_frags], &sinfo->frags[0],
 		       sizeof(skb_frag_t) * nr_frags);
 
-		xdp_update_skb_shared_info(skb, skinfo->nr_frags + nr_frags,
-					   sinfo->xdp_frags_size,
-					   nr_frags * xdp->frame_sz,
-					   xdp_buff_is_frag_pfmemalloc(xdp));
+		xdp_update_skb_frags_info(skb, skinfo->nr_frags + nr_frags,
+					  sinfo->xdp_frags_size,
+					  nr_frags * xdp->frame_sz,
+					  xdp_buff_get_skb_flags(xdp));
 	}
 
 	return skb;
@@ -1169,6 +1328,45 @@ static void ice_put_rx_mbuf(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp,
 }
 
 /**
+ * ice_clean_ctrl_rx_irq - Clean descriptors from flow director Rx ring
+ * @rx_ring: Rx descriptor ring for ctrl_vsi to transact packets on
+ *
+ * This function cleans Rx descriptors from the ctrl_vsi Rx ring used
+ * to set flow director rules on VFs.
+ */
+void ice_clean_ctrl_rx_irq(struct ice_rx_ring *rx_ring)
+{
+	u32 ntc = rx_ring->next_to_clean;
+	unsigned int total_rx_pkts = 0;
+	u32 cnt = rx_ring->count;
+
+	while (likely(total_rx_pkts < ICE_DFLT_IRQ_WORK)) {
+		struct ice_vsi *ctrl_vsi = rx_ring->vsi;
+		union ice_32b_rx_flex_desc *rx_desc;
+		u16 stat_err_bits;
+
+		rx_desc = ICE_RX_DESC(rx_ring, ntc);
+
+		stat_err_bits = BIT(ICE_RX_FLEX_DESC_STATUS0_DD_S);
+		if (!ice_test_staterr(rx_desc->wb.status_error0, stat_err_bits))
+			break;
+
+		dma_rmb();
+
+		if (ctrl_vsi->vf)
+			ice_vc_fdir_irq_handler(ctrl_vsi, rx_desc);
+
+		if (++ntc == cnt)
+			ntc = 0;
+		total_rx_pkts++;
+	}
+
+	rx_ring->first_desc = ntc;
+	rx_ring->next_to_clean = ntc;
+	ice_init_ctrl_rx_descs(rx_ring, ICE_RX_DESC_UNUSED(rx_ring));
+}
+
+/**
  * ice_clean_rx_irq - Clean completed descriptors from Rx ring - bounce buf
  * @rx_ring: Rx descriptor ring to transact packets on
  * @budget: Total limit on number of packets to process
@@ -1180,7 +1378,7 @@ static void ice_put_rx_mbuf(struct ice_rx_ring *rx_ring, struct xdp_buff *xdp,
  *
  * Returns amount of work completed
  */
-int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
+static int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
 {
 	unsigned int total_rx_bytes = 0, total_rx_pkts = 0;
 	unsigned int offset = rx_ring->rx_offset;
@@ -1227,17 +1425,6 @@ int ice_clean_rx_irq(struct ice_rx_ring *rx_ring, int budget)
 		dma_rmb();
 
 		ice_trace(clean_rx_irq, rx_ring, rx_desc);
-		if (rx_desc->wb.rxdid == FDIR_DESC_RXDID || !rx_ring->netdev) {
-			struct ice_vsi *ctrl_vsi = rx_ring->vsi;
-
-			if (rx_desc->wb.rxdid == FDIR_DESC_RXDID &&
-			    ctrl_vsi->vf)
-				ice_vc_fdir_irq_handler(ctrl_vsi, rx_desc);
-			if (++ntc == cnt)
-				ntc = 0;
-			rx_ring->first_desc = ntc;
-			continue;
-		}
 
 		size = le16_to_cpu(rx_desc->wb.pkt_len) &
 			ICE_RX_FLX_DESC_PKT_LEN_M;
@@ -1766,10 +1953,46 @@ ice_tx_map(struct ice_tx_ring *tx_ring, struct ice_tx_buf *first,
 	/* notify HW of packet */
 	kick = __netdev_tx_sent_queue(txring_txq(tx_ring), first->bytecount,
 				      netdev_xmit_more());
-	if (kick)
-		/* notify HW of packet */
-		writel(i, tx_ring->tail);
+	if (!kick)
+		return;
 
+	if (ice_is_txtime_cfg(tx_ring)) {
+		struct ice_tstamp_ring *tstamp_ring = tx_ring->tstamp_ring;
+		u32 tstamp_count = tstamp_ring->count;
+		u32 j = tstamp_ring->next_to_use;
+		struct ice_ts_desc *ts_desc;
+		struct timespec64 ts;
+		u32 tstamp;
+
+		ts = ktime_to_timespec64(first->skb->tstamp);
+		tstamp = ts.tv_nsec >> ICE_TXTIME_CTX_RESOLUTION_128NS;
+
+		ts_desc = ICE_TS_DESC(tstamp_ring, j);
+		ts_desc->tx_desc_idx_tstamp = ice_build_tstamp_desc(i, tstamp);
+
+		j++;
+		if (j == tstamp_count) {
+			u32 fetch = tstamp_count - tx_ring->count;
+
+			j = 0;
+
+			/* To prevent an MDD, when wrapping the tstamp ring
+			 * create additional TS descriptors equal to the number
+			 * of the fetch TS descriptors value. HW will merge the
+			 * TS descriptors with the same timestamp value into a
+			 * single descriptor.
+			 */
+			for (; j < fetch; j++) {
+				ts_desc = ICE_TS_DESC(tstamp_ring, j);
+				ts_desc->tx_desc_idx_tstamp =
+				       ice_build_tstamp_desc(i, tstamp);
+			}
+		}
+		tstamp_ring->next_to_use = j;
+		writel_relaxed(j, tstamp_ring->tail);
+	} else {
+		writel_relaxed(i, tx_ring->tail);
+	}
 	return;
 
 dma_error:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (C) 2021, Intel Corporation. */
 
-#include "ice_virtchnl_allowlist.h"
+#include "allowlist.h"
 
 /* Purpose of this file is to share functionality to allowlist or denylist
  * opcodes used in PF <-> VF communication. Group of opcodes:
@@ -65,7 +65,7 @@ static const u32 vlan_v2_allowlist_opcodes[] = {
 /* VIRTCHNL_VF_OFFLOAD_RSS_PF */
 static const u32 rss_pf_allowlist_opcodes[] = {
 	VIRTCHNL_OP_CONFIG_RSS_KEY, VIRTCHNL_OP_CONFIG_RSS_LUT,
-	VIRTCHNL_OP_GET_RSS_HENA_CAPS, VIRTCHNL_OP_SET_RSS_HENA,
+	VIRTCHNL_OP_GET_RSS_HASHCFG_CAPS, VIRTCHNL_OP_SET_RSS_HASHCFG,
 	VIRTCHNL_OP_CONFIG_RSS_HFUNC,
 };
 
