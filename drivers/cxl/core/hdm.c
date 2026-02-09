@@ -530,7 +530,7 @@ resource_size_t cxl_dpa_size(struct cxl_endpoint_decoder *cxled)
 
 resource_size_t cxl_dpa_resource_start(struct cxl_endpoint_decoder *cxled)
 {
-	resource_size_t base = -1;
+	resource_size_t base = RESOURCE_SIZE_MAX;
 
 	lockdep_assert_held(&cxl_rwsem.dpa);
 	if (cxled->dpa_res)
@@ -903,6 +903,9 @@ static void cxl_decoder_reset(struct cxl_decoder *cxld)
 	u32 ctrl;
 
 	if ((cxld->flags & CXL_DECODER_F_ENABLE) == 0)
+		return;
+
+	if (test_bit(CXL_DECODER_F_LOCK, &cxld->flags))
 		return;
 
 	if (port->commit_end == id)

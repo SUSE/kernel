@@ -352,7 +352,7 @@ static match_table_t f2fs_checkpoint_tokens = {
 
 struct f2fs_fs_context {
 	struct f2fs_mount_info info;
-	unsigned int	opt_mask;	/* Bits changed */
+	unsigned long long opt_mask;	/* Bits changed */
 	unsigned int	spec_mask;
 	unsigned short	qname_mask;
 };
@@ -360,23 +360,23 @@ struct f2fs_fs_context {
 #define F2FS_CTX_INFO(ctx)	((ctx)->info)
 
 static inline void ctx_set_opt(struct f2fs_fs_context *ctx,
-			       unsigned int flag)
+			       enum f2fs_mount_opt flag)
 {
-	ctx->info.opt |= flag;
-	ctx->opt_mask |= flag;
+	ctx->info.opt |= BIT(flag);
+	ctx->opt_mask |= BIT(flag);
 }
 
 static inline void ctx_clear_opt(struct f2fs_fs_context *ctx,
-				 unsigned int flag)
+				 enum f2fs_mount_opt flag)
 {
-	ctx->info.opt &= ~flag;
-	ctx->opt_mask |= flag;
+	ctx->info.opt &= ~BIT(flag);
+	ctx->opt_mask |= BIT(flag);
 }
 
 static inline bool ctx_test_opt(struct f2fs_fs_context *ctx,
-				unsigned int flag)
+				enum f2fs_mount_opt flag)
 {
-	return ctx->info.opt & flag;
+	return ctx->info.opt & BIT(flag);
 }
 
 void f2fs_printk(struct f2fs_sb_info *sbi, bool limit_rate,
@@ -1371,7 +1371,7 @@ static int f2fs_check_compression(struct fs_context *fc,
 			ctx_test_opt(ctx, F2FS_MOUNT_COMPRESS_CACHE))
 			f2fs_info(sbi, "Image doesn't support compression");
 		clear_compression_spec(ctx);
-		ctx->opt_mask &= ~F2FS_MOUNT_COMPRESS_CACHE;
+		ctx->opt_mask &= ~BIT(F2FS_MOUNT_COMPRESS_CACHE);
 		return 0;
 	}
 	if (ctx->spec_mask & F2FS_SPEC_compress_extension) {
@@ -1439,42 +1439,42 @@ static int f2fs_check_opt_consistency(struct fs_context *fc,
 		return -EINVAL;
 
 	if (f2fs_hw_should_discard(sbi) &&
-			(ctx->opt_mask & F2FS_MOUNT_DISCARD) &&
+			(ctx->opt_mask & BIT(F2FS_MOUNT_DISCARD)) &&
 			!ctx_test_opt(ctx, F2FS_MOUNT_DISCARD)) {
 		f2fs_warn(sbi, "discard is required for zoned block devices");
 		return -EINVAL;
 	}
 
 	if (!f2fs_hw_support_discard(sbi) &&
-			(ctx->opt_mask & F2FS_MOUNT_DISCARD) &&
+			(ctx->opt_mask & BIT(F2FS_MOUNT_DISCARD)) &&
 			ctx_test_opt(ctx, F2FS_MOUNT_DISCARD)) {
 		f2fs_warn(sbi, "device does not support discard");
 		ctx_clear_opt(ctx, F2FS_MOUNT_DISCARD);
-		ctx->opt_mask &= ~F2FS_MOUNT_DISCARD;
+		ctx->opt_mask &= ~BIT(F2FS_MOUNT_DISCARD);
 	}
 
 	if (f2fs_sb_has_device_alias(sbi) &&
-			(ctx->opt_mask & F2FS_MOUNT_READ_EXTENT_CACHE) &&
+			(ctx->opt_mask & BIT(F2FS_MOUNT_READ_EXTENT_CACHE)) &&
 			!ctx_test_opt(ctx, F2FS_MOUNT_READ_EXTENT_CACHE)) {
 		f2fs_err(sbi, "device aliasing requires extent cache");
 		return -EINVAL;
 	}
 
 	if (test_opt(sbi, RESERVE_ROOT) &&
-			(ctx->opt_mask & F2FS_MOUNT_RESERVE_ROOT) &&
+			(ctx->opt_mask & BIT(F2FS_MOUNT_RESERVE_ROOT)) &&
 			ctx_test_opt(ctx, F2FS_MOUNT_RESERVE_ROOT)) {
 		f2fs_info(sbi, "Preserve previous reserve_root=%u",
 			F2FS_OPTION(sbi).root_reserved_blocks);
 		ctx_clear_opt(ctx, F2FS_MOUNT_RESERVE_ROOT);
-		ctx->opt_mask &= ~F2FS_MOUNT_RESERVE_ROOT;
+		ctx->opt_mask &= ~BIT(F2FS_MOUNT_RESERVE_ROOT);
 	}
 	if (test_opt(sbi, RESERVE_NODE) &&
-			(ctx->opt_mask & F2FS_MOUNT_RESERVE_NODE) &&
+			(ctx->opt_mask & BIT(F2FS_MOUNT_RESERVE_NODE)) &&
 			ctx_test_opt(ctx, F2FS_MOUNT_RESERVE_NODE)) {
 		f2fs_info(sbi, "Preserve previous reserve_node=%u",
 			F2FS_OPTION(sbi).root_reserved_nodes);
 		ctx_clear_opt(ctx, F2FS_MOUNT_RESERVE_NODE);
-		ctx->opt_mask &= ~F2FS_MOUNT_RESERVE_NODE;
+		ctx->opt_mask &= ~BIT(F2FS_MOUNT_RESERVE_NODE);
 	}
 
 	err = f2fs_check_test_dummy_encryption(fc, sb);
@@ -1799,7 +1799,7 @@ static int f2fs_drop_inode(struct inode *inode)
 	 *    - f2fs_gc -> iput -> evict
 	 *       - inode_wait_for_writeback(inode)
 	 */
-	if ((!inode_unhashed(inode) && inode->i_state & I_SYNC)) {
+	if ((!inode_unhashed(inode) && inode_state_read(inode) & I_SYNC)) {
 		if (!inode->i_nlink && !is_bad_inode(inode)) {
 			/* to avoid evict_inode call simultaneously */
 			__iget(inode);
@@ -2636,10 +2636,11 @@ restore_flag:
 static int f2fs_enable_checkpoint(struct f2fs_sb_info *sbi)
 {
 	unsigned int nr_pages = get_pages(sbi, F2FS_DIRTY_DATA) / 16;
-	long long start, writeback, end;
+	long long start, writeback, lock, sync_inode, end;
 	int ret;
 
-	f2fs_info(sbi, "f2fs_enable_checkpoint() starts, meta: %lld, node: %lld, data: %lld",
+	f2fs_info(sbi, "%s start, meta: %lld, node: %lld, data: %lld",
+					__func__,
 					get_pages(sbi, F2FS_DIRTY_META),
 					get_pages(sbi, F2FS_DIRTY_NODES),
 					get_pages(sbi, F2FS_DIRTY_DATA));
@@ -2651,18 +2652,25 @@ static int f2fs_enable_checkpoint(struct f2fs_sb_info *sbi)
 	/* we should flush all the data to keep data consistency */
 	while (get_pages(sbi, F2FS_DIRTY_DATA)) {
 		writeback_inodes_sb_nr(sbi->sb, nr_pages, WB_REASON_SYNC);
-		f2fs_io_schedule_timeout(DEFAULT_IO_TIMEOUT);
+		f2fs_io_schedule_timeout(DEFAULT_SCHEDULE_TIMEOUT);
 
 		if (f2fs_time_over(sbi, ENABLE_TIME))
 			break;
 	}
 	writeback = ktime_get();
 
-	sync_inodes_sb(sbi->sb);
+	f2fs_down_write(&sbi->cp_enable_rwsem);
+
+	lock = ktime_get();
+
+	if (get_pages(sbi, F2FS_DIRTY_DATA))
+		sync_inodes_sb(sbi->sb);
 
 	if (unlikely(get_pages(sbi, F2FS_DIRTY_DATA)))
-		f2fs_warn(sbi, "checkpoint=enable has some unwritten data: %lld",
-					get_pages(sbi, F2FS_DIRTY_DATA));
+		f2fs_warn(sbi, "%s: has some unwritten data: %lld",
+			__func__, get_pages(sbi, F2FS_DIRTY_DATA));
+
+	sync_inode = ktime_get();
 
 	f2fs_down_write(&sbi->gc_lock);
 	f2fs_dirty_to_prefree(sbi);
@@ -2671,6 +2679,13 @@ static int f2fs_enable_checkpoint(struct f2fs_sb_info *sbi)
 	set_sbi_flag(sbi, SBI_IS_DIRTY);
 	f2fs_up_write(&sbi->gc_lock);
 
+	f2fs_info(sbi, "%s sync_fs, meta: %lld, imeta: %lld, node: %lld, dents: %lld, qdata: %lld",
+					__func__,
+					get_pages(sbi, F2FS_DIRTY_META),
+					get_pages(sbi, F2FS_DIRTY_IMETA),
+					get_pages(sbi, F2FS_DIRTY_NODES),
+					get_pages(sbi, F2FS_DIRTY_DENTS),
+					get_pages(sbi, F2FS_DIRTY_QDATA));
 	ret = f2fs_sync_fs(sbi->sb, 1);
 	if (ret)
 		f2fs_err(sbi, "%s sync_fs failed, ret: %d", __func__, ret);
@@ -2678,11 +2693,17 @@ static int f2fs_enable_checkpoint(struct f2fs_sb_info *sbi)
 	/* Let's ensure there's no pending checkpoint anymore */
 	f2fs_flush_ckpt_thread(sbi);
 
+	f2fs_up_write(&sbi->cp_enable_rwsem);
+
 	end = ktime_get();
 
-	f2fs_info(sbi, "f2fs_enable_checkpoint() finishes, writeback:%llu, sync:%llu",
-					ktime_ms_delta(writeback, start),
-					ktime_ms_delta(end, writeback));
+	f2fs_info(sbi, "%s end, writeback:%llu, "
+				"lock:%llu, sync_inode:%llu, sync_fs:%llu",
+				__func__,
+				ktime_ms_delta(writeback, start),
+				ktime_ms_delta(lock, writeback),
+				ktime_ms_delta(sync_inode, lock),
+				ktime_ms_delta(end, sync_inode));
 	return ret;
 }
 
@@ -3118,7 +3139,7 @@ retry:
 							&folio, &fsdata);
 		if (unlikely(err)) {
 			if (err == -ENOMEM) {
-				f2fs_io_schedule_timeout(DEFAULT_IO_TIMEOUT);
+				memalloc_retry_wait(GFP_NOFS);
 				goto retry;
 			}
 			set_sbi_flag(F2FS_SB(sb), SBI_QUOTA_NEED_REPAIR);
@@ -4885,6 +4906,7 @@ try_onemore:
 	init_f2fs_rwsem(&sbi->node_change);
 	spin_lock_init(&sbi->stat_lock);
 	init_f2fs_rwsem(&sbi->cp_rwsem);
+	init_f2fs_rwsem(&sbi->cp_enable_rwsem);
 	init_f2fs_rwsem(&sbi->quota_sem);
 	init_waitqueue_head(&sbi->cp_wait);
 	spin_lock_init(&sbi->error_lock);

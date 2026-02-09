@@ -476,6 +476,7 @@ void amdgpu_dm_irq_fini(struct amdgpu_device *adev)
 
 void amdgpu_dm_irq_suspend(struct amdgpu_device *adev)
 {
+	struct drm_device *dev = adev_to_drm(adev);
 	int src;
 	struct list_head *hnd_list_h;
 	struct list_head *hnd_list_l;
@@ -512,6 +513,9 @@ void amdgpu_dm_irq_suspend(struct amdgpu_device *adev)
 	}
 
 	DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
+
+	if (dev->mode_config.poll_enabled)
+		drm_kms_helper_poll_disable(dev);
 }
 
 void amdgpu_dm_irq_resume_early(struct amdgpu_device *adev)
@@ -537,6 +541,7 @@ void amdgpu_dm_irq_resume_early(struct amdgpu_device *adev)
 
 void amdgpu_dm_irq_resume_late(struct amdgpu_device *adev)
 {
+	struct drm_device *dev = adev_to_drm(adev);
 	int src;
 	struct list_head *hnd_list_h, *hnd_list_l;
 	unsigned long irq_table_flags;
@@ -557,6 +562,9 @@ void amdgpu_dm_irq_resume_late(struct amdgpu_device *adev)
 	}
 
 	DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
+
+	if (dev->mode_config.poll_enabled)
+		drm_kms_helper_poll_enable(dev);
 }
 
 /*
@@ -893,6 +901,7 @@ void amdgpu_dm_hpd_init(struct amdgpu_device *adev)
 	struct drm_connector_list_iter iter;
 	int irq_type;
 	int i;
+	bool use_polling = false;
 
 	/* First, clear all hpd and hpdrx interrupts */
 	for (i = DC_IRQ_SOURCE_HPD1; i <= DC_IRQ_SOURCE_HPD6RX; i++) {
@@ -910,6 +919,14 @@ void amdgpu_dm_hpd_init(struct amdgpu_device *adev)
 			continue;
 
 		amdgpu_dm_connector = to_amdgpu_dm_connector(connector);
+
+		/*
+		 * Analog connectors may be hot-plugged unlike other connector
+		 * types that don't support HPD. Only poll analog connectors.
+		 */
+		use_polling |=
+			amdgpu_dm_connector->dc_link &&
+			dc_connector_supports_analog(amdgpu_dm_connector->dc_link->link_id.id);
 
 		dc_link = amdgpu_dm_connector->dc_link;
 
@@ -947,6 +964,9 @@ void amdgpu_dm_hpd_init(struct amdgpu_device *adev)
 		}
 	}
 	drm_connector_list_iter_end(&iter);
+
+	if (use_polling)
+		drm_kms_helper_poll_init(dev);
 }
 
 /**
@@ -997,4 +1017,7 @@ void amdgpu_dm_hpd_fini(struct amdgpu_device *adev)
 		}
 	}
 	drm_connector_list_iter_end(&iter);
+
+	if (dev->mode_config.poll_enabled)
+		drm_kms_helper_poll_fini(dev);
 }

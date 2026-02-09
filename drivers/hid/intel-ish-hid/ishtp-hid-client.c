@@ -495,6 +495,7 @@ static int ishtp_enum_enum_devices(struct ishtp_cl *hid_ishtp_cl)
 	int rv;
 
 	/* Send HOSTIF_DM_ENUM_DEVICES */
+	client_data->enum_devices_done = false;
 	memset(&msg, 0, sizeof(struct hostif_msg));
 	msg.hdr.command = HOSTIF_DM_ENUM_DEVICES;
 	rv = ishtp_cl_send(hid_ishtp_cl, (unsigned char *)&msg,
@@ -757,8 +758,15 @@ static void hid_ishtp_cl_resume_handler(struct work_struct *work)
 	struct ishtp_cl *hid_ishtp_cl = client_data->hid_ishtp_cl;
 
 	if (ishtp_wait_resume(ishtp_get_ishtp_device(hid_ishtp_cl))) {
-		client_data->suspended = false;
-		wake_up_interruptible(&client_data->ishtp_resume_wait);
+		/*
+		 * Clear the suspended flag only when the connection is established.
+		 * If the connection is not established, the suspended flag will be cleared after
+		 * the connection is made.
+		 */
+		if (ishtp_get_connection_state(hid_ishtp_cl) == ISHTP_CL_CONNECTED) {
+			client_data->suspended = false;
+			wake_up_interruptible(&client_data->ishtp_resume_wait);
+		}
 	} else {
 		hid_ishtp_trace(client_data, "hid client: wait for resume timed out");
 		dev_err(cl_data_to_dev(client_data), "wait for resume timed out");

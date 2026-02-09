@@ -233,6 +233,10 @@ const char link_mode_names[][ETH_GSTRING_LEN] = {
 	__DEFINE_LINK_MODE_NAME(800000, DR4_2, Full),
 	__DEFINE_LINK_MODE_NAME(800000, SR4, Full),
 	__DEFINE_LINK_MODE_NAME(800000, VR4, Full),
+	__DEFINE_LINK_MODE_NAME(1600000, CR8, Full),
+	__DEFINE_LINK_MODE_NAME(1600000, KR8, Full),
+	__DEFINE_LINK_MODE_NAME(1600000, DR8, Full),
+	__DEFINE_LINK_MODE_NAME(1600000, DR8_2, Full),
 };
 static_assert(ARRAY_SIZE(link_mode_names) == __ETHTOOL_LINK_MODE_MASK_NBITS);
 
@@ -422,6 +426,10 @@ const struct link_mode_info link_mode_params[] = {
 	__DEFINE_LINK_MODE_PARAMS(800000, DR4_2, Full),
 	__DEFINE_LINK_MODE_PARAMS(800000, SR4, Full),
 	__DEFINE_LINK_MODE_PARAMS(800000, VR4, Full),
+	__DEFINE_LINK_MODE_PARAMS(1600000, CR8, Full),
+	__DEFINE_LINK_MODE_PARAMS(1600000, KR8, Full),
+	__DEFINE_LINK_MODE_PARAMS(1600000, DR8, Full),
+	__DEFINE_LINK_MODE_PARAMS(1600000, DR8_2, Full),
 };
 static_assert(ARRAY_SIZE(link_mode_params) == __ETHTOOL_LINK_MODE_MASK_NBITS);
 EXPORT_SYMBOL_GPL(link_mode_params);
@@ -853,9 +861,6 @@ ethtool_rxfh_ctx_alloc(const struct ethtool_ops *ops,
 	ctx->key_size = key_size;
 	ctx->key_off = key_off;
 	ctx->priv_size = ops->rxfh_priv_size;
-
-	ctx->hfunc = ETH_RSS_HASH_NO_CHANGE;
-	ctx->input_xfrm = RXH_XFRM_NO_CHANGE;
 
 	return ctx;
 }
