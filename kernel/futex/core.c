@@ -50,10 +50,10 @@
  */
 static struct {
 	struct futex_hash_bucket *queues;
-	unsigned long            hashsize;
+	unsigned long            hashmask;
 } __futex_data __read_mostly __aligned(2*sizeof(long));
 #define futex_queues   (__futex_data.queues)
-#define futex_hashsize (__futex_data.hashsize)
+#define futex_hashmask (__futex_data.hashmask)
 
 
 /*
@@ -119,7 +119,7 @@ struct futex_hash_bucket *futex_hash(union futex_key *key)
 	u32 hash = jhash2((u32 *)key, offsetof(typeof(*key), both.offset) / 4,
 			  key->both.offset);
 
-	return &futex_queues[hash & (futex_hashsize - 1)];
+	return &futex_queues[hash & futex_hashmask];
 }
 
 
@@ -181,12 +181,12 @@ static u64 get_inode_sequence_number(struct inode *inode)
 		return old;
 
 	for (;;) {
-		u64 new = atomic64_add_return(1, &i_seq);
+		u64 new = atomic64_inc_return(&i_seq);
 		if (WARN_ON_ONCE(!new))
 			continue;
 
-		old = atomic64_cmpxchg_relaxed(&inode->i_sequence, 0, new);
-		if (old)
+		old = 0;
+		if (!atomic64_try_cmpxchg_relaxed(&inode->i_sequence, &old, new))
 			return old;
 		return new;
 	}
@@ -449,28 +449,6 @@ struct futex_q *futex_top_waiter(struct futex_hash_bucket *hb, union futex_key *
 			return this;
 	}
 	return NULL;
-}
-
-int futex_cmpxchg_value_locked(u32 *curval, u32 __user *uaddr, u32 uval, u32 newval)
-{
-	int ret;
-
-	pagefault_disable();
-	ret = futex_atomic_cmpxchg_inatomic(curval, uaddr, uval, newval);
-	pagefault_enable();
-
-	return ret;
-}
-
-int futex_get_value_locked(u32 *dest, u32 __user *from)
-{
-	int ret;
-
-	pagefault_disable();
-	ret = __get_user(*dest, from);
-	pagefault_enable();
-
-	return ret ? -EFAULT : 0;
 }
 
 /**
@@ -1149,27 +1127,28 @@ void futex_exit_release(struct task_struct *tsk)
 
 static int __init futex_init(void)
 {
+	unsigned long hashsize, i;
 	unsigned int futex_shift;
-	unsigned long i;
 
 #ifdef CONFIG_BASE_SMALL
-	futex_hashsize = 16;
+	hashsize = 16;
 #else
-	futex_hashsize = roundup_pow_of_two(256 * num_possible_cpus());
+	hashsize = roundup_pow_of_two(256 * num_possible_cpus());
 #endif
 
 	futex_queues = alloc_large_system_hash("futex", sizeof(*futex_queues),
-					       futex_hashsize, 0, 0,
+					       hashsize, 0, 0,
 					       &futex_shift, NULL,
-					       futex_hashsize, futex_hashsize);
-	futex_hashsize = 1UL << futex_shift;
+					       hashsize, hashsize);
+	hashsize = 1UL << futex_shift;
 
-	for (i = 0; i < futex_hashsize; i++) {
+	for (i = 0; i < hashsize; i++) {
 		atomic_set(&futex_queues[i].waiters, 0);
 		plist_head_init(&futex_queues[i].chain);
 		spin_lock_init(&futex_queues[i].lock);
 	}
 
+	futex_hashmask = hashsize - 1;
 	return 0;
 }
 core_initcall(futex_init);

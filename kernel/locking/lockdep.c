@@ -5094,6 +5094,9 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	if (!prove_locking || lock->key == &__lockdep_no_validate__)
 		check = 0;
 
+	if (DEBUG_LOCKS_WARN_ON(subclass >= MAX_LOCKDEP_SUBCLASSES))
+		return 0;
+
 	if (subclass < NR_LOCKDEP_CACHING_CLASSES)
 		class = lock->class_cache[subclass];
 	/*
@@ -6249,6 +6252,9 @@ static void zap_class(struct pending_free *pf, struct lock_class *class)
 		hlist_del_rcu(&class->hash_entry);
 		WRITE_ONCE(class->key, NULL);
 		WRITE_ONCE(class->name, NULL);
+		/* Class allocated but not used, -1 in nr_unused_locks */
+		if (class->usage_mask == 0)
+			debug_atomic_dec(nr_unused_locks);
 		nr_lock_classes--;
 		__clear_bit(class - lock_classes, lock_classes_in_use);
 		if (class - lock_classes == max_lock_class_idx)
@@ -6595,8 +6601,16 @@ void lockdep_unregister_key(struct lock_class_key *key)
 	if (need_callback)
 		call_rcu(&delayed_free.rcu_head, free_zapped_rcu);
 
-	/* Wait until is_dynamic_key() has finished accessing k->hash_entry. */
-	synchronize_rcu();
+	/*
+	 * Wait until is_dynamic_key() has finished accessing k->hash_entry.
+	 *
+	 * Some operations like __qdisc_destroy() will call this in a debug
+	 * kernel, and the network traffic is disabled while waiting, hence
+	 * the delay of the wait matters in debugging cases. Currently use a
+	 * synchronize_rcu_expedited() to speed up the wait at the cost of
+	 * system IPIs. TODO: Replace RCU with hazptr for this.
+	 */
+	synchronize_rcu_expedited();
 }
 EXPORT_SYMBOL_GPL(lockdep_unregister_key);
 
