@@ -3390,7 +3390,7 @@ static void stmmac_safety_feat_configuration(struct stmmac_priv *priv)
  *  0 on success and an appropriate (-)ve integer as defined in errno.h
  *  file on failure.
  */
-static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
+static int stmmac_hw_setup(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	u32 rx_cnt = priv->plat->rx_queues_to_use;
@@ -3450,11 +3450,6 @@ static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
 	stmmac_dma_operation_mode(priv);
 
 	stmmac_mmc_setup(priv);
-
-	if (ptp_register)
-		stmmac_setup_ptp(priv);
-	else
-		stmmac_init_timestamping(priv);
 
 	if (priv->use_riwt) {
 		u32 queue;
@@ -3947,11 +3942,13 @@ static int __stmmac_open(struct net_device *dev,
 		}
 	}
 
-	ret = stmmac_hw_setup(dev, true);
+	ret = stmmac_hw_setup(dev);
 	if (ret < 0) {
 		netdev_err(priv->dev, "%s: Hw setup failed\n", __func__);
 		goto init_error;
 	}
+
+	stmmac_setup_ptp(priv);
 
 	stmmac_init_coalesce(priv);
 
@@ -7876,13 +7873,15 @@ int stmmac_resume(struct device *dev)
 	stmmac_free_tx_skbufs(priv);
 	stmmac_clear_descriptors(priv, &priv->dma_conf);
 
-	ret = stmmac_hw_setup(ndev, false);
+	ret = stmmac_hw_setup(ndev);
 	if (ret < 0) {
 		netdev_err(priv->dev, "%s: Hw setup failed\n", __func__);
 		mutex_unlock(&priv->lock);
 		rtnl_unlock();
 		return ret;
 	}
+
+	stmmac_init_timestamping(priv);
 
 	stmmac_init_coalesce(priv);
 	stmmac_set_rx_mode(ndev);
