@@ -1892,6 +1892,7 @@ operations:
             - info-version-fixed
             - info-version-running
             - info-version-stored
+            - info-board-serial-number
       dump:
         reply: *info-get-reply
 
