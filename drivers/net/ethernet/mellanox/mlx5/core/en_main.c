@@ -3350,6 +3350,7 @@ static int mlx5e_switch_priv_params(struct mlx5e_priv *priv,
 		}
 	}
 
+	mlx5e_set_xdp_feature(priv);
 	return 0;
 }
 
@@ -3381,6 +3382,7 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 		}
 	}
 
+	mlx5e_set_xdp_feature(priv);
 	if (!MLX5_CAP_GEN(priv->mdev, tis_tir_td_order))
 		mlx5e_close_channels(old_chs);
 	priv->profile->update_rx(priv);
@@ -4389,10 +4391,10 @@ static int mlx5e_handle_feature(struct net_device *netdev,
 	return 0;
 }
 
-void mlx5e_set_xdp_feature(struct net_device *netdev)
+void mlx5e_set_xdp_feature(struct mlx5e_priv *priv)
 {
-	struct mlx5e_priv *priv = netdev_priv(netdev);
 	struct mlx5e_params *params = &priv->channels.params;
+	struct net_device *netdev = priv->netdev;
 	xdp_features_t val;
 
 	if (!netdev->netdev_ops->ndo_bpf ||
@@ -4440,9 +4442,6 @@ int mlx5e_set_features(struct net_device *netdev, netdev_features_t features)
 		netdev->features = oper_features;
 		return -EINVAL;
 	}
-
-	/* update XDP supported features */
-	mlx5e_set_xdp_feature(netdev);
 
 	return 0;
 }
@@ -5810,7 +5809,7 @@ static void mlx5e_build_nic_netdev(struct net_device *netdev)
 	netdev->priv_flags       |= IFF_UNICAST_FLT;
 
 	netif_set_tso_max_size(netdev, GSO_MAX_SIZE);
-	mlx5e_set_xdp_feature(netdev);
+	mlx5e_set_xdp_feature(priv);
 	mlx5e_set_netdev_dev_addr(netdev);
 	mlx5e_macsec_build_netdev(priv);
 	mlx5e_ipsec_build_netdev(priv);
@@ -5903,7 +5902,7 @@ static int mlx5e_nic_init(struct mlx5_core_dev *mdev,
 		rtnl_lock();
 
 	/* update XDP supported features */
-	mlx5e_set_xdp_feature(netdev);
+	mlx5e_set_xdp_feature(priv);
 
 	if (take_rtnl)
 		rtnl_unlock();
