@@ -1471,6 +1471,7 @@ struct gendisk *__alloc_disk_node(struct request_queue *q, int node_id,
 #ifdef CONFIG_BLOCK_HOLDER_DEPRECATED
 	INIT_LIST_HEAD(&disk->slave_bdevs);
 #endif
+	mutex_init(&disk->rqos_state_mutex);
 	kobject_init(&disk->queue_kobj, &blk_queue_ktype);
 	return disk;
 
