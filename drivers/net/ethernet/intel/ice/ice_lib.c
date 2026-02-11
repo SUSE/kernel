@@ -2780,7 +2780,6 @@ void ice_dis_vsi(struct ice_vsi *vsi, bool locked)
  * @vsi: VSI pointer
  *
  * Associate queue[s] with napi for all vectors.
- * The caller must hold rtnl_lock.
  */
 void ice_vsi_set_napi_queues(struct ice_vsi *vsi)
 {
@@ -2790,6 +2789,7 @@ void ice_vsi_set_napi_queues(struct ice_vsi *vsi)
 	if (!netdev)
 		return;
 
+	ASSERT_RTNL();
 	ice_for_each_rxq(vsi, q_idx)
 		netif_queue_set_napi(netdev, q_idx, NETDEV_QUEUE_TYPE_RX,
 				     &vsi->rx_rings[q_idx]->q_vector->napi);
@@ -2810,7 +2810,6 @@ void ice_vsi_set_napi_queues(struct ice_vsi *vsi)
  * @vsi: VSI pointer
  *
  * Clear the association between all VSI queues queue[s] and napi.
- * The caller must hold rtnl_lock.
  */
 void ice_vsi_clear_napi_queues(struct ice_vsi *vsi)
 {
@@ -2820,6 +2819,7 @@ void ice_vsi_clear_napi_queues(struct ice_vsi *vsi)
 	if (!netdev)
 		return;
 
+	ASSERT_RTNL();
 	ice_for_each_txq(vsi, q_idx)
 		netif_queue_set_napi(netdev, q_idx, NETDEV_QUEUE_TYPE_TX, NULL);
 
