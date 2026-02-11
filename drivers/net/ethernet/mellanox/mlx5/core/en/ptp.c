@@ -81,7 +81,7 @@ static struct mlx5e_skb_cb_hwtstamp *mlx5e_skb_cb_get_hwts(struct sk_buff *skb)
 }
 
 static void mlx5e_skb_cb_hwtstamp_tx(struct sk_buff *skb,
-				     struct mlx5e_ptp_cq_stats *cq_stats)
+				     struct mlx5e_ptpsq *ptpsq)
 {
 	struct skb_shared_hwtstamps hwts = {};
 	ktime_t diff;
@@ -91,8 +91,17 @@ static void mlx5e_skb_cb_hwtstamp_tx(struct sk_buff *skb,
 
 	/* Maximal allowed diff is 1 / 128 second */
 	if (diff > (NSEC_PER_SEC >> 7)) {
-		cq_stats->abort++;
-		cq_stats->abort_abs_diff_ns += diff;
+		struct mlx5e_txqsq *sq = &ptpsq->txqsq;
+
+		ptpsq->cq_stats->abort++;
+		ptpsq->cq_stats->abort_abs_diff_ns += diff;
+		if (diff > (NSEC_PER_SEC >> 1) &&
+		    !test_and_set_bit(MLX5E_SQ_STATE_RECOVERING, &sq->state)) {
+			netdev_warn(sq->channel->netdev,
+				    "PTP TX timestamp difference between CQE and port exceeds threshold: %lld ns, recovering SQ %u\n",
+				    (s64)diff, sq->sqn);
+			queue_work(sq->priv->wq, &ptpsq->report_unhealthy_work);
+		}
 		return;
 	}
 
@@ -102,7 +111,7 @@ static void mlx5e_skb_cb_hwtstamp_tx(struct sk_buff *skb,
 
 void mlx5e_skb_cb_hwtstamp_handler(struct sk_buff *skb, int hwtstamp_type,
 				   ktime_t hwtstamp,
-				   struct mlx5e_ptp_cq_stats *cq_stats)
+				   struct mlx5e_ptpsq *ptpsq)
 {
 	switch (hwtstamp_type) {
 	case (MLX5E_SKB_CB_CQE_HWTSTAMP):
@@ -120,7 +129,7 @@ void mlx5e_skb_cb_hwtstamp_handler(struct sk_buff *skb, int hwtstamp_type,
 	    !mlx5e_skb_cb_get_hwts(skb)->port_hwtstamp)
 		return;
 
-	mlx5e_skb_cb_hwtstamp_tx(skb, cq_stats);
+	mlx5e_skb_cb_hwtstamp_tx(skb, ptpsq);
 	memset(skb->cb, 0, sizeof(struct mlx5e_skb_cb_hwtstamp));
 }
 
@@ -208,7 +217,7 @@ static void mlx5e_ptp_handle_ts_cqe(struct mlx5e_ptpsq *ptpsq,
 
 	hwtstamp = mlx5e_cqe_ts_to_ns(sq->ptp_cyc2time, sq->clock, get_cqe_ts(cqe));
 	mlx5e_skb_cb_hwtstamp_handler(skb, MLX5E_SKB_CB_PORT_HWTSTAMP,
-				      hwtstamp, ptpsq->cq_stats);
+				      hwtstamp, ptpsq);
 	ptpsq->cq_stats->cqe++;
 
 	mlx5e_ptpsq_mark_ts_cqes_undelivered(ptpsq, hwtstamp);
