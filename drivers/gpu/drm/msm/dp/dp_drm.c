@@ -292,7 +292,7 @@ static const struct drm_bridge_funcs edp_bridge_ops = {
 };
 
 int dp_bridge_init(struct msm_dp *dp_display, struct drm_device *dev,
-			struct drm_encoder *encoder)
+		   struct drm_encoder *encoder, bool yuv_supported)
 {
 	int rc;
 	struct msm_dp_bridge *dp_bridge;
@@ -307,6 +307,7 @@ int dp_bridge_init(struct msm_dp *dp_display, struct drm_device *dev,
 	bridge = &dp_bridge->bridge;
 	bridge->funcs = dp_display->is_edp ? &edp_bridge_ops : &dp_bridge_ops;
 	bridge->type = dp_display->connector_type;
+	bridge->ycbcr_420_allowed = yuv_supported;
 
 	/*
 	 * Many ops only make sense for DP. Why?
@@ -354,8 +355,8 @@ int dp_bridge_init(struct msm_dp *dp_display, struct drm_device *dev,
 }
 
 /* connector initialization */
-struct drm_connector *dp_drm_connector_init(struct msm_dp *dp_display, struct drm_encoder *encoder,
-					    bool yuv_supported)
+struct drm_connector *dp_drm_connector_init(struct msm_dp *dp_display,
+					    struct drm_encoder *encoder)
 {
 	struct drm_connector *connector = NULL;
 
@@ -365,9 +366,6 @@ struct drm_connector *dp_drm_connector_init(struct msm_dp *dp_display, struct dr
 
 	if (!dp_display->is_edp)
 		drm_connector_attach_dp_subconnector_property(connector);
-
-	if (yuv_supported)
-		connector->ycbcr_420_allowed = true;
 
 	drm_connector_attach_encoder(connector, encoder);
 
