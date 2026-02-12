@@ -223,6 +223,8 @@ struct dm_table {
 
 	/* a list of devices used by this table */
 	struct list_head devices;
+	/* KABI: unused, this member has been removed in upstream 4550a71b179b */
+	struct rw_semaphore devices_lock;
 
 	/* events get handed up using this callback */
 	void (*event_fn)(void *data);
