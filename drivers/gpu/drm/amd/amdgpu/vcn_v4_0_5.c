@@ -105,7 +105,7 @@ static void vcn_v4_0_5_unified_ring_set_wptr(struct amdgpu_ring *ring);
 /**
  * vcn_v4_0_5_early_init - set function pointers and load microcode
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Set ring and irq function pointers
  * Load microcode from filesystem
@@ -125,7 +125,7 @@ static int vcn_v4_0_5_early_init(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_sw_init - sw init for VCN block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Load firmware and sw initialization
  */
@@ -221,7 +221,7 @@ static int vcn_v4_0_5_sw_init(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_sw_fini - sw fini for VCN block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * VCN suspend and free up sw allocation
  */
@@ -262,7 +262,7 @@ static int vcn_v4_0_5_sw_fini(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_hw_init - start and test VCN block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Initialize the hardware, boot up the VCPU and do some testing
  */
@@ -292,7 +292,7 @@ static int vcn_v4_0_5_hw_init(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_hw_fini - stop the hardware block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Stop the VCN block, mark ring as not ready any more
  */
@@ -321,7 +321,7 @@ static int vcn_v4_0_5_hw_fini(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_suspend - suspend VCN block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * HW fini and suspend VCN block
  */
@@ -341,7 +341,7 @@ static int vcn_v4_0_5_suspend(struct amdgpu_ip_block *ip_block)
 /**
  * vcn_v4_0_5_resume - resume VCN block
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Resume firmware and hw init VCN block
  */
@@ -1482,7 +1482,7 @@ static bool vcn_v4_0_5_is_idle(void *handle)
 /**
  * vcn_v4_0_5_wait_for_idle - wait for VCN block idle
  *
- * @handle: amdgpu_device pointer
+ * @ip_block: Pointer to the amdgpu_ip_block for this hw instance.
  *
  * Wait for VCN block idle
  */
