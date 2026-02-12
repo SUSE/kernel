@@ -51,9 +51,6 @@
 #define IVPU_NUM_PRIORITIES    4
 #define IVPU_NUM_CMDQS_PER_CTX (IVPU_NUM_PRIORITIES)
 
-#define IVPU_CMDQ_MIN_ID 1
-#define IVPU_CMDQ_MAX_ID 255
-
 #define IVPU_PLATFORM_SILICON 0
 #define IVPU_PLATFORM_SIMICS  2
 #define IVPU_PLATFORM_FPGA    3
@@ -170,15 +167,13 @@ struct ivpu_file_priv {
 	struct kref ref;
 	struct ivpu_device *vdev;
 	struct mutex lock; /* Protects cmdq */
-	struct xarray cmdq_xa;
+	struct ivpu_cmdq *cmdq[IVPU_NUM_CMDQS_PER_CTX];
 	struct ivpu_mmu_context ctx;
 	struct mutex ms_lock; /* Protects ms_instance_list, ms_info_bo */
 	struct list_head ms_instance_list;
 	struct ivpu_bo *ms_info_bo;
 	struct xa_limit job_limit;
 	u32 job_id_next;
-	struct xa_limit cmdq_limit;
-	u32 cmdq_id_next;
 	bool has_mmu_faults;
 	bool bound;
 	bool aborted;
@@ -199,6 +194,7 @@ extern bool ivpu_force_snoop;
 #define IVPU_TEST_MODE_PREEMPTION_DISABLE BIT(6)
 #define IVPU_TEST_MODE_HWS_EXTRA_EVENTS	  BIT(7)
 #define IVPU_TEST_MODE_DISABLE_TIMEOUTS   BIT(8)
+#define IVPU_TEST_MODE_TURBO		  BIT(9)
 extern int ivpu_test_mode;
 
 struct ivpu_file_priv *ivpu_file_priv_get(struct ivpu_file_priv *file_priv);
