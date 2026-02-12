@@ -452,14 +452,9 @@ bool dc_stream_adjust_vmin_vmax(struct dc *dc,
 	 * Don't adjust DRR while there's bandwidth optimizations pending to
 	 * avoid conflicting with firmware updates.
 	 */
-	if (dc->ctx->dce_version > DCE_VERSION_MAX) {
-		if ((dc->optimized_required || dc->wm_optimized_required) &&
-			(stream->adjust.v_total_max != adjust->v_total_max ||
-			stream->adjust.v_total_min != adjust->v_total_min)) {
-			stream->adjust.timing_adjust_pending = true;
+	if (dc->ctx->dce_version > DCE_VERSION_MAX)
+		if (dc->optimized_required || dc->wm_optimized_required)
 			return false;
-		}
-	}
 
 	dc_exit_ips_for_hw_access(dc);
 
@@ -471,7 +466,6 @@ bool dc_stream_adjust_vmin_vmax(struct dc *dc,
 
 	if (dc->caps.max_v_total != 0 &&
 		(adjust->v_total_max > dc->caps.max_v_total || adjust->v_total_min > dc->caps.max_v_total)) {
-		stream->adjust.timing_adjust_pending = false;
 		if (adjust->allow_otg_v_count_halt)
 			return set_long_vtotal(dc, stream, adjust);
 		else
@@ -485,7 +479,7 @@ bool dc_stream_adjust_vmin_vmax(struct dc *dc,
 			dc->hwss.set_drr(&pipe,
 					1,
 					*adjust);
-			stream->adjust.timing_adjust_pending = false;
+
 			return true;
 		}
 	}
@@ -3040,14 +3034,8 @@ static void copy_stream_update_to_stream(struct dc *dc,
 	if (update->vrr_active_fixed)
 		stream->vrr_active_fixed = *update->vrr_active_fixed;
 
-	if (update->crtc_timing_adjust) {
-		if (stream->adjust.v_total_min != update->crtc_timing_adjust->v_total_min ||
-			stream->adjust.v_total_max != update->crtc_timing_adjust->v_total_max ||
-			stream->adjust.timing_adjust_pending)
-			update->crtc_timing_adjust->timing_adjust_pending = true;
+	if (update->crtc_timing_adjust)
 		stream->adjust = *update->crtc_timing_adjust;
-		update->crtc_timing_adjust->timing_adjust_pending = false;
-	}
 
 	if (update->dpms_off)
 		stream->dpms_off = *update->dpms_off;

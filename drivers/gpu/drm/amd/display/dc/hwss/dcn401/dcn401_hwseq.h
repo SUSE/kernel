@@ -81,14 +81,7 @@ void dcn401_hardware_release(struct dc *dc);
 void dcn401_update_odm(struct dc *dc, struct dc_state *context,
 		struct pipe_ctx *otg_master);
 void adjust_hotspot_between_slices_for_2x_magnify(uint32_t cursor_width, struct dc_cursor_position *pos_cpy);
-void dcn401_wait_for_det_buffer_update(struct dc *dc, struct dc_state *context, struct pipe_ctx *otg_master);
+void dcn401_wait_for_det_buffer_update_under_otg_master(struct dc *dc, struct dc_state *context, struct pipe_ctx *otg_master);
 void dcn401_interdependent_update_lock(struct dc *dc, struct dc_state *context, bool lock);
 void dcn401_program_outstanding_updates(struct dc *dc, struct dc_state *context);
-void dcn401_reset_back_end_for_pipe(
-		struct dc *dc,
-		struct pipe_ctx *pipe_ctx,
-		struct dc_state *context);
-void dcn401_reset_hw_ctx_wrap(
-		struct dc *dc,
-		struct dc_state *context);
 #endif /* __DC_HWSS_DCN401_H__ */
