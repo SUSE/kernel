@@ -157,8 +157,6 @@ static void try_add_system(struct xe_device *xe, struct xe_bo *bo,
 
 		bo->placements[*c] = (struct ttm_place) {
 			.mem_type = XE_PL_TT,
-			.flags = (bo_flags & XE_BO_FLAG_VRAM_MASK) ?
-			TTM_PL_FLAG_FALLBACK : 0,
 		};
 		*c += 1;
 	}
@@ -285,6 +283,8 @@ struct xe_ttm_tt {
 	struct device *dev;
 	struct sg_table sgt;
 	struct sg_table *sg;
+	/** @purgeable: Whether the content of the pages of @ttm is purgeable. */
+	bool purgeable;
 };
 
 static int xe_tt_map_sg(struct ttm_tt *tt)
@@ -705,6 +705,21 @@ static int xe_bo_move(struct ttm_buffer_object *ttm_bo, bool evict,
 		goto out;
 	}
 
+	/* Reject BO eviction if BO is bound to current VM. */
+	if (evict && ctx->resv) {
+		struct drm_gpuvm_bo *vm_bo;
+
+		drm_gem_for_each_gpuvm_bo(vm_bo, &bo->ttm.base) {
+			struct xe_vm *vm = gpuvm_to_vm(vm_bo->vm);
+
+			if (xe_vm_resv(vm) == ctx->resv &&
+			    xe_vm_in_preempt_fence_mode(vm)) {
+				ret = -EBUSY;
+				goto out;
+			}
+		}
+	}
+
 	/*
 	 * Failed multi-hop where the old_mem is still marked as
 	 * TTM_PL_FLAG_TEMPORARY, should just be a dummy move.
@@ -764,7 +779,7 @@ static int xe_bo_move(struct ttm_buffer_object *ttm_bo, bool evict,
 	if (xe_rpm_reclaim_safe(xe)) {
 		/*
 		 * We might be called through swapout in the validation path of
-		 * another TTM device, so unconditionally acquire rpm here.
+		 * another TTM device, so acquire rpm here.
 		 */
 		xe_pm_runtime_get(xe);
 	} else {
@@ -861,25 +876,6 @@ out:
 	}
 
 	return ret;
-}
-
-static bool
-xe_bo_eviction_valuable(struct ttm_buffer_object *bo, const struct ttm_place *place)
-{
-	struct drm_gpuvm_bo *vm_bo;
-
-	if (!ttm_bo_eviction_valuable(bo, place))
-		return false;
-
-	if (!xe_bo_is_xe_bo(bo))
-		return true;
-
-	drm_gem_for_each_gpuvm_bo(vm_bo, &bo->base) {
-		if (xe_vm_is_validating(gpuvm_to_vm(vm_bo->vm)))
-			return false;
-	}
-
-	return true;
 }
 
 /**
@@ -1112,6 +1108,33 @@ static void xe_ttm_bo_delete_mem_notify(struct ttm_buffer_object *ttm_bo)
 	}
 }
 
+static void xe_ttm_bo_purge(struct ttm_buffer_object *ttm_bo, struct ttm_operation_ctx *ctx)
+{
+	struct xe_device *xe = ttm_to_xe_device(ttm_bo->bdev);
+
+	if (ttm_bo->ttm) {
+		struct ttm_placement place = {};
+		int ret = ttm_bo_validate(ttm_bo, &place, ctx);
+
+		drm_WARN_ON(&xe->drm, ret);
+	}
+}
+
+static void xe_ttm_bo_swap_notify(struct ttm_buffer_object *ttm_bo)
+{
+	struct ttm_operation_ctx ctx = {
+		.interruptible = false
+	};
+
+	if (ttm_bo->ttm) {
+		struct xe_ttm_tt *xe_tt =
+			container_of(ttm_bo->ttm, struct xe_ttm_tt, ttm);
+
+		if (xe_tt->purgeable)
+			xe_ttm_bo_purge(ttm_bo, &ctx);
+	}
+}
+
 const struct ttm_device_funcs xe_ttm_funcs = {
 	.ttm_tt_create = xe_ttm_tt_create,
 	.ttm_tt_populate = xe_ttm_tt_populate,
@@ -1122,8 +1145,9 @@ const struct ttm_device_funcs xe_ttm_funcs = {
 	.io_mem_reserve = xe_ttm_io_mem_reserve,
 	.io_mem_pfn = xe_ttm_io_mem_pfn,
 	.release_notify = xe_ttm_bo_release_notify,
-	.eviction_valuable = xe_bo_eviction_valuable,
+	.eviction_valuable = ttm_bo_eviction_valuable,
 	.delete_mem_notify = xe_ttm_bo_delete_mem_notify,
+	.swap_notify = xe_ttm_bo_swap_notify,
 };
 
 static void xe_ttm_bo_destroy(struct ttm_buffer_object *ttm_bo)
@@ -1746,7 +1770,6 @@ uint64_t vram_region_gpu_offset(struct ttm_resource *res)
 /**
  * xe_bo_pin_external - pin an external BO
  * @bo: buffer object to be pinned
- * @in_place: Pin in current placement, don't attempt to migrate.
  *
  * Pin an external (not tied to a VM, can be exported via dma-buf / prime FD)
  * BO. Unique call compared to xe_bo_pin as this function has it own set of
@@ -1754,7 +1777,7 @@ uint64_t vram_region_gpu_offset(struct ttm_resource *res)
  *
  * Returns 0 for success, negative error code otherwise.
  */
-int xe_bo_pin_external(struct xe_bo *bo, bool in_place)
+int xe_bo_pin_external(struct xe_bo *bo)
 {
 	struct xe_device *xe = xe_bo_device(bo);
 	int err;
@@ -1763,11 +1786,9 @@ int xe_bo_pin_external(struct xe_bo *bo, bool in_place)
 	xe_assert(xe, xe_bo_is_user(bo));
 
 	if (!xe_bo_is_pinned(bo)) {
-		if (!in_place) {
-			err = xe_bo_validate(bo, NULL, false);
-			if (err)
-				return err;
-		}
+		err = xe_bo_validate(bo, NULL, false);
+		if (err)
+			return err;
 
 		if (xe_bo_is_vram(bo)) {
 			spin_lock(&xe->pinned.lock);
@@ -1918,11 +1939,6 @@ int xe_bo_validate(struct xe_bo *bo, struct xe_vm *vm, bool allow_res_evict)
 		.interruptible = true,
 		.no_wait_gpu = false,
 	};
-	struct pin_cookie cookie;
-	int ret;
-
-	if (xe_bo_is_pinned(bo))
-		return 0;
 
 	if (vm) {
 		lockdep_assert_held(&vm->lock);
@@ -1932,11 +1948,7 @@ int xe_bo_validate(struct xe_bo *bo, struct xe_vm *vm, bool allow_res_evict)
 		ctx.resv = xe_vm_resv(vm);
 	}
 
-	cookie = xe_vm_set_validating(vm, allow_res_evict);
-	ret = ttm_bo_validate(&bo->ttm, &bo->placement, &ctx);
-	xe_vm_clear_validating(vm, allow_res_evict, cookie);
-
-	return ret;
+	return ttm_bo_validate(&bo->ttm, &bo->placement, &ctx);
 }
 
 bool xe_bo_is_xe_bo(struct ttm_buffer_object *bo)
