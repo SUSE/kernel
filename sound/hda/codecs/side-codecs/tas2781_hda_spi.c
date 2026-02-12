@@ -733,6 +733,9 @@ static int tas2781_hda_bind(struct device *dev, struct device *master,
 
 	pm_runtime_put_autosuspend(dev);
 
+	/* Only HP Laptop support SPI-based TAS2781 */
+	tas_hda->catlog_id = HP;
+
 	return ret;
 }
 
