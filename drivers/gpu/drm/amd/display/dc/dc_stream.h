@@ -143,6 +143,7 @@ union stream_update_flags {
 		uint32_t crtc_timing_adjust : 1;
 		uint32_t fams_changed : 1;
 		uint32_t scaler_sharpener : 1;
+		uint32_t sharpening_required : 1;
 	} bits;
 
 	uint32_t raw;
@@ -311,6 +312,7 @@ struct dc_stream_state {
 
 	struct luminance_data lumin_data;
 	bool scaler_sharpener_update;
+	bool sharpening_required;
 };
 
 #define ABM_LEVEL_IMMEDIATE_DISABLE 255
@@ -359,6 +361,7 @@ struct dc_stream_update {
 	struct dc_cursor_position *cursor_position;
 	bool *hw_cursor_req;
 	bool *scaler_sharpener_update;
+	bool *sharpening_required;
 };
 
 bool dc_is_stream_unchanged(
