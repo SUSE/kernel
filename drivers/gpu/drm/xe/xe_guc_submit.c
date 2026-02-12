@@ -1071,6 +1071,7 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 	struct xe_gpu_scheduler *sched = &q->guc->sched;
 	struct xe_guc *guc = exec_queue_to_guc(q);
 	const char *process_name = "no process";
+	struct xe_device *xe = guc_to_xe(guc);
 	int err = -ETIME;
 	pid_t pid = -1;
 	int i = 0;
@@ -1096,6 +1097,21 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 	skip_timeout_check = exec_queue_reset(q) ||
 		exec_queue_killed_or_banned_or_wedged(q) ||
 		exec_queue_destroyed(q);
+
+	/*
+	 * If devcoredump not captured and GuC capture for the job is not ready
+	 * do manual capture first and decide later if we need to use it
+	 */
+	if (!exec_queue_killed(q) && !xe->devcoredump.captured &&
+	    !xe_guc_capture_get_matching_and_lock(job)) {
+		/* take force wake before engine register manual capture */
+		if (xe_force_wake_get(gt_to_fw(q->gt), XE_FORCEWAKE_ALL))
+			xe_gt_info(q->gt, "failed to get forcewake for coredump capture\n");
+
+		xe_engine_snapshot_capture_for_job(job);
+
+		xe_force_wake_put(gt_to_fw(q->gt), XE_FORCEWAKE_ALL);
+	}
 
 	/*
 	 * XXX: Sampling timeout doesn't work in wedged mode as we have to
@@ -2022,8 +2038,6 @@ int xe_guc_exec_queue_reset_handler(struct xe_guc *guc, u32 *msg, u32 len)
 	xe_gt_info(gt, "Engine reset: engine_class=%s, logical_mask: 0x%x, guc_id=%d",
 		   xe_hw_engine_class_to_str(q->class), q->logical_mask, guc_id);
 
-	/* FIXME: Do error capture, most likely async */
-
 	trace_xe_exec_queue_reset(q);
 
 	/*
@@ -2049,7 +2063,7 @@ int xe_guc_exec_queue_reset_handler(struct xe_guc *guc, u32 *msg, u32 len)
  * XE_GUC_ACTION_STATE_CAPTURE_NOTIFICATION to host, this function will be
  * called 1st to check status before process the data comes with the message.
  *
- * Returns: None
+ * Returns: error code. 0 if success
  */
 int xe_guc_error_capture_handler(struct xe_guc *guc, u32 *msg, u32 len)
 {
