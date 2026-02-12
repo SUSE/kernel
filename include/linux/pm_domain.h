@@ -258,6 +258,7 @@ struct generic_pm_domain_data {
 	unsigned int performance_state;
 	unsigned int default_pstate;
 	unsigned int rpm_pstate;
+	unsigned int opp_token;
 	bool hw_mode;
 	bool rpm_always_on;
 	void *data;
