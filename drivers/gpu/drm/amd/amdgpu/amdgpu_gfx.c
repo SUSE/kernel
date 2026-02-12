@@ -2002,6 +2002,7 @@ void amdgpu_gfx_enforce_isolation_ring_begin_use(struct amdgpu_ring *ring)
 {
 	struct amdgpu_device *adev = ring->adev;
 	u32 idx;
+	bool sched_work = false;
 
 	if (!adev->gfx.enable_cleaner_shader)
 		return;
@@ -2020,15 +2021,19 @@ void amdgpu_gfx_enforce_isolation_ring_begin_use(struct amdgpu_ring *ring)
 	mutex_lock(&adev->enforce_isolation_mutex);
 	if (adev->enforce_isolation[idx]) {
 		if (adev->kfd.init_complete)
-			amdgpu_gfx_kfd_sch_ctrl(adev, idx, false);
+			sched_work = true;
 	}
 	mutex_unlock(&adev->enforce_isolation_mutex);
+
+	if (sched_work)
+		amdgpu_gfx_kfd_sch_ctrl(adev, idx, false);
 }
 
 void amdgpu_gfx_enforce_isolation_ring_end_use(struct amdgpu_ring *ring)
 {
 	struct amdgpu_device *adev = ring->adev;
 	u32 idx;
+	bool sched_work = false;
 
 	if (!adev->gfx.enable_cleaner_shader)
 		return;
@@ -2044,9 +2049,12 @@ void amdgpu_gfx_enforce_isolation_ring_end_use(struct amdgpu_ring *ring)
 	mutex_lock(&adev->enforce_isolation_mutex);
 	if (adev->enforce_isolation[idx]) {
 		if (adev->kfd.init_complete)
-			amdgpu_gfx_kfd_sch_ctrl(adev, idx, true);
+			sched_work = true;
 	}
 	mutex_unlock(&adev->enforce_isolation_mutex);
+
+	if (sched_work)
+		amdgpu_gfx_kfd_sch_ctrl(adev, idx, true);
 }
 
 /*
