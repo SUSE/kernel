@@ -21,13 +21,10 @@
 
 #define DRIVER_NAME "intel_vpu"
 #define DRIVER_DESC "Driver for Intel NPU (Neural Processing Unit)"
-#define DRIVER_DATE "20230117"
 
-#define PCI_DEVICE_ID_MTL	0x7d1d
-#define PCI_DEVICE_ID_ARL	0xad1d
-#define PCI_DEVICE_ID_LNL	0x643e
-#define PCI_DEVICE_ID_PTL_P	0xb03e
-#define PCI_DEVICE_ID_WCL	0xfd3e
+#define PCI_DEVICE_ID_MTL   0x7d1d
+#define PCI_DEVICE_ID_ARL   0xad1d
+#define PCI_DEVICE_ID_LNL   0x643e
 
 #define IVPU_HW_IP_37XX 37
 #define IVPU_HW_IP_40XX 40
@@ -139,7 +136,6 @@ struct ivpu_device {
 	struct mutex context_list_lock; /* Protects user context addition/removal */
 	struct xarray context_xa;
 	struct xa_limit context_xa_limit;
-	struct work_struct context_abort_work;
 
 	struct xarray db_xa;
 	struct xa_limit db_limit;
@@ -148,7 +144,6 @@ struct ivpu_device {
 	struct mutex bo_list_lock; /* Protects bo_list */
 	struct list_head bo_list;
 
-	struct mutex submitted_jobs_lock; /* Protects submitted_jobs */
 	struct xarray submitted_jobs_xa;
 	struct ivpu_ipc_consumer job_done_consumer;
 
@@ -231,9 +226,6 @@ static inline int ivpu_hw_ip_gen(struct ivpu_device *vdev)
 		return IVPU_HW_IP_37XX;
 	case PCI_DEVICE_ID_LNL:
 		return IVPU_HW_IP_40XX;
-	case PCI_DEVICE_ID_PTL_P:
-	case PCI_DEVICE_ID_WCL:
-		return IVPU_HW_IP_50XX;
 	default:
 		dump_stack();
 		ivpu_err(vdev, "Unknown NPU IP generation\n");
@@ -248,8 +240,6 @@ static inline int ivpu_hw_btrs_gen(struct ivpu_device *vdev)
 	case PCI_DEVICE_ID_ARL:
 		return IVPU_HW_BTRS_MTL;
 	case PCI_DEVICE_ID_LNL:
-	case PCI_DEVICE_ID_PTL_P:
-	case PCI_DEVICE_ID_WCL:
 		return IVPU_HW_BTRS_LNL;
 	default:
 		dump_stack();
