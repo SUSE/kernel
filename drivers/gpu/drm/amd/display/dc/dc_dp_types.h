@@ -1201,6 +1201,7 @@ struct dpcd_caps {
 	struct edp_psr_info psr_info;
 
 	struct replay_info pr_info;
+	uint16_t edp_oled_emission_rate;
 };
 
 union dpcd_sink_ext_caps {
@@ -1214,7 +1215,7 @@ union dpcd_sink_ext_caps {
 		uint8_t oled : 1;
 		uint8_t reserved_2 : 1;
 		uint8_t miniled : 1;
-		uint8_t reserved : 1;
+		uint8_t emission_output : 1;
 	} bits;
 	uint8_t raw;
 };
