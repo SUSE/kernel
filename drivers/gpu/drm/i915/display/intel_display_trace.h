@@ -19,6 +19,7 @@
 
 #include "i915_drv.h"
 #include "intel_crtc.h"
+#include "intel_display_limits.h"
 #include "intel_display_types.h"
 #include "intel_vblank.h"
 
@@ -31,8 +32,8 @@ TRACE_EVENT(intel_pipe_enable,
 
 	    TP_STRUCT__entry(
 			     __string(dev, __dev_name_kms(crtc))
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
+			     __array(u32, frame, I915_MAX_PIPES)
+			     __array(u32, scanline, I915_MAX_PIPES)
 			     __field(enum pipe, pipe)
 			     ),
 	    TP_fast_assign(
@@ -59,8 +60,8 @@ TRACE_EVENT(intel_pipe_disable,
 
 	    TP_STRUCT__entry(
 			     __string(dev, __dev_name_kms(crtc))
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
+			     __array(u32, frame, I915_MAX_PIPES)
+			     __array(u32, scanline, I915_MAX_PIPES)
 			     __field(enum pipe, pipe)
 			     ),
 
@@ -188,8 +189,8 @@ TRACE_EVENT(intel_memory_cxsr,
 
 	    TP_STRUCT__entry(
 			     __string(dev, __dev_name_display(display))
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
+			     __array(u32, frame, I915_MAX_PIPES)
+			     __array(u32, scanline, I915_MAX_PIPES)
 			     __field(bool, old)
 			     __field(bool, new)
 			     ),
