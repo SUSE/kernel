@@ -99,12 +99,7 @@ struct a6xx_gmu {
 	struct completion pd_gate;
 
 	struct qmp *qmp;
-
-/* To check if we can trigger sleep seq at PDC. Cleared in a6xx_rpmh_stop() */
-#define GMU_STATUS_FW_START	0
-/* To track if PDC sleep seq was done */
-#define GMU_STATUS_PDC_SLEEP	1
-	unsigned long status;
+	struct a6xx_hfi_msg_bw_table *bw_table;
 };
 
 static inline u32 gmu_read(struct a6xx_gmu *gmu, u32 offset)
