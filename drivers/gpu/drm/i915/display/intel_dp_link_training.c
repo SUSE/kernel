@@ -1694,19 +1694,11 @@ void intel_dp_128b132b_sdp_crc16(struct intel_dp *intel_dp,
 	lt_dbg(intel_dp, DP_PHY_DPRX, "DP2.0 SDP CRC16 for 128b/132b enabled\n");
 }
 
-static struct intel_dp *intel_connector_to_intel_dp(struct intel_connector *connector)
-{
-	if (connector->mst_port)
-		return connector->mst_port;
-	else
-		return enc_to_intel_dp(intel_attached_encoder(connector));
-}
-
 static int i915_dp_force_link_rate_show(struct seq_file *m, void *data)
 {
 	struct intel_connector *connector = to_intel_connector(m->private);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int current_rate = -1;
 	int force_rate;
 	int err;
@@ -1777,7 +1769,7 @@ static ssize_t i915_dp_force_link_rate_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct intel_connector *connector = to_intel_connector(m->private);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int rate;
 	int err;
 
@@ -1804,7 +1796,7 @@ static int i915_dp_force_lane_count_show(struct seq_file *m, void *data)
 {
 	struct intel_connector *connector = to_intel_connector(m->private);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int current_lane_count = -1;
 	int force_lane_count;
 	int err;
@@ -1879,7 +1871,7 @@ static ssize_t i915_dp_force_lane_count_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct intel_connector *connector = to_intel_connector(m->private);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int lane_count;
 	int err;
 
@@ -1906,7 +1898,7 @@ static int i915_dp_max_link_rate_show(void *data, u64 *val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
@@ -1925,7 +1917,7 @@ static int i915_dp_max_lane_count_show(void *data, u64 *val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
@@ -1944,7 +1936,7 @@ static int i915_dp_force_link_training_failure_show(void *data, u64 *val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
@@ -1962,7 +1954,7 @@ static int i915_dp_force_link_training_failure_write(void *data, u64 val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	if (val > 2)
@@ -1986,7 +1978,7 @@ static int i915_dp_force_link_retrain_show(void *data, u64 *val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
@@ -2004,7 +1996,7 @@ static int i915_dp_force_link_retrain_write(void *data, u64 val)
 {
 	struct intel_connector *connector = to_intel_connector(data);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
@@ -2027,7 +2019,7 @@ static int i915_dp_link_retrain_disabled_show(struct seq_file *m, void *data)
 {
 	struct intel_connector *connector = to_intel_connector(m->private);
 	struct intel_display *display = to_intel_display(connector);
-	struct intel_dp *intel_dp = intel_connector_to_intel_dp(connector);
+	struct intel_dp *intel_dp = intel_attached_dp(connector);
 	int err;
 
 	err = drm_modeset_lock_single_interruptible(&display->drm->mode_config.connection_mutex);
