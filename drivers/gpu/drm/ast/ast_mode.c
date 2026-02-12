@@ -1400,7 +1400,9 @@ int ast_mode_config_init(struct ast_device *ast)
 	if (ret)
 		return ret;
 
-	ast_crtc_init(dev);
+	ret = ast_crtc_init(dev);
+	if (ret)
+		return ret;
 
 	switch (ast->tx_chip) {
 	case AST_TX_NONE:
