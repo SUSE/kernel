@@ -76,9 +76,6 @@ static void smu_power_profile_mode_get(struct smu_context *smu,
 				       enum PP_SMC_POWER_PROFILE profile_mode);
 static void smu_power_profile_mode_put(struct smu_context *smu,
 				       enum PP_SMC_POWER_PROFILE profile_mode);
-static int smu_od_edit_dpm_table(void *handle,
-				 enum PP_OD_DPM_TABLE_COMMAND type,
-				 long *input, uint32_t size);
 
 static int smu_sys_get_pp_feature_mask(void *handle,
 				       char *buf)
@@ -2132,12 +2129,11 @@ static int smu_suspend(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int smu_resume(void *handle)
+static int smu_resume(struct amdgpu_ip_block *ip_block)
 {
 	int ret;
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 	struct smu_context *smu = adev->powerplay.pp_handle;
-	struct smu_dpm_context *smu_dpm_ctx = &(smu->smu_dpm);
 
 	if (amdgpu_sriov_vf(adev)&& !amdgpu_sriov_is_pp_one_vf(adev))
 		return 0;
@@ -2172,12 +2168,6 @@ static int smu_resume(void *handle)
 	if (smu->current_power_limit) {
 		ret = smu_set_power_limit(smu, smu->current_power_limit);
 		if (ret && ret != -EOPNOTSUPP)
-			return ret;
-	}
-
-	if (smu_dpm_ctx->dpm_level == AMD_DPM_FORCED_LEVEL_MANUAL && smu->od_enabled) {
-		ret = smu_od_edit_dpm_table(smu, PP_OD_COMMIT_DPM_TABLE, NULL, 0);
-		if (ret)
 			return ret;
 	}
 

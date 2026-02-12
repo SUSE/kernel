@@ -2775,7 +2775,7 @@ static int amdgpu_device_fw_loading(struct amdgpu_device *adev)
 				break;
 
 			if (amdgpu_in_reset(adev) || adev->in_suspend) {
-				r = adev->ip_blocks[i].version->funcs->resume(adev);
+				r = adev->ip_blocks[i].version->funcs->resume(&adev->ip_blocks[i]);
 				if (r) {
 					DRM_ERROR("resume of IP block <%s> failed %d\n",
 							  adev->ip_blocks[i].version->funcs->name, r);
@@ -3697,7 +3697,7 @@ static int amdgpu_device_ip_reinit_late_sriov(struct amdgpu_device *adev)
 				continue;
 
 			if (block->version->type == AMD_IP_BLOCK_TYPE_SMC)
-				r = block->version->funcs->resume(adev);
+				r = block->version->funcs->resume(&adev->ip_blocks[i]);
 			else
 				r = block->version->funcs->hw_init(adev);
 
@@ -3735,7 +3735,7 @@ static int amdgpu_device_ip_resume_phase1(struct amdgpu_device *adev)
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_IH ||
 		    (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_PSP && amdgpu_sriov_vf(adev))) {
 
-			r = adev->ip_blocks[i].version->funcs->resume(adev);
+			r = adev->ip_blocks[i].version->funcs->resume(&adev->ip_blocks[i]);
 			if (r) {
 				DRM_ERROR("resume of IP block <%s> failed %d\n",
 					  adev->ip_blocks[i].version->funcs->name, r);
@@ -3753,7 +3753,7 @@ static int amdgpu_device_ip_resume_phase1(struct amdgpu_device *adev)
  *
  * @adev: amdgpu_device pointer
  *
- * Second resume function for hardware IPs.  The list of all the hardware
+ * First resume function for hardware IPs.  The list of all the hardware
  * IPs that make up the asic is walked and the resume callbacks are run for
  * all blocks except COMMON, GMC, and IH.  resume puts the hardware into a
  * functional state after a suspend and updates the software state as
@@ -3771,50 +3771,15 @@ static int amdgpu_device_ip_resume_phase2(struct amdgpu_device *adev)
 		if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_COMMON ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_GMC ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_IH ||
-		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_DCE ||
 		    adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_PSP)
 			continue;
-		r = adev->ip_blocks[i].version->funcs->resume(adev);
+		r = adev->ip_blocks[i].version->funcs->resume(&adev->ip_blocks[i]);
 		if (r) {
 			DRM_ERROR("resume of IP block <%s> failed %d\n",
 				  adev->ip_blocks[i].version->funcs->name, r);
 			return r;
 		}
 		adev->ip_blocks[i].status.hw = true;
-	}
-
-	return 0;
-}
-
-/**
- * amdgpu_device_ip_resume_phase3 - run resume for hardware IPs
- *
- * @adev: amdgpu_device pointer
- *
- * Third resume function for hardware IPs.  The list of all the hardware
- * IPs that make up the asic is walked and the resume callbacks are run for
- * all DCE.  resume puts the hardware into a functional state after a suspend
- * and updates the software state as necessary.  This function is also used
- * for restoring the GPU after a GPU reset.
- *
- * Returns 0 on success, negative error code on failure.
- */
-static int amdgpu_device_ip_resume_phase3(struct amdgpu_device *adev)
-{
-	int i, r;
-
-	for (i = 0; i < adev->num_ip_blocks; i++) {
-		if (!adev->ip_blocks[i].status.valid || adev->ip_blocks[i].status.hw)
-			continue;
-		if (adev->ip_blocks[i].version->type == AMD_IP_BLOCK_TYPE_DCE) {
-			r = adev->ip_blocks[i].version->funcs->resume(adev);
-			if (r) {
-				DRM_ERROR("resume of IP block <%s> failed %d\n",
-					  adev->ip_blocks[i].version->funcs->name, r);
-				return r;
-			}
-			adev->ip_blocks[i].status.hw = true;
-		}
 	}
 
 	return 0;
@@ -3848,13 +3813,6 @@ static int amdgpu_device_ip_resume(struct amdgpu_device *adev)
 
 	if (adev->mman.buffer_funcs_ring->sched.ready)
 		amdgpu_ttm_set_buffer_funcs_status(adev, true);
-
-	if (r)
-		return r;
-
-	amdgpu_fence_driver_hw_init(adev);
-
-	r = amdgpu_device_ip_resume_phase3(adev);
 
 	return r;
 }
@@ -4944,6 +4902,7 @@ int amdgpu_device_resume(struct drm_device *dev, bool fbcon)
 		dev_err(adev->dev, "amdgpu_device_ip_resume failed (%d).\n", r);
 		goto exit;
 	}
+	amdgpu_fence_driver_hw_init(adev);
 
 	if (!adev->in_s0ix) {
 		r = amdgpu_amdkfd_resume(adev, adev->in_runpm);
@@ -5521,10 +5480,6 @@ int amdgpu_device_reinit_after_reset(struct amdgpu_reset_context *reset_context)
 
 				if (tmp_adev->mman.buffer_funcs_ring->sched.ready)
 					amdgpu_ttm_set_buffer_funcs_status(tmp_adev, true);
-
-				r = amdgpu_device_ip_resume_phase3(tmp_adev);
-				if (r)
-					goto out;
 
 				if (vram_lost)
 					amdgpu_device_fill_reset_magic(tmp_adev);
