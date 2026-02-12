@@ -14,6 +14,7 @@
 #include "regs/xe_gt_regs.h"
 #include "regs/xe_gtt_defs.h"
 #include "regs/xe_guc_regs.h"
+#include "regs/xe_irq_regs.h"
 #include "xe_bo.h"
 #include "xe_device.h"
 #include "xe_force_wake.h"
@@ -22,7 +23,6 @@
 #include "xe_gt_sriov_vf.h"
 #include "xe_gt_throttle.h"
 #include "xe_guc_ads.h"
-#include "xe_guc_capture.h"
 #include "xe_guc_ct.h"
 #include "xe_guc_db_mgr.h"
 #include "xe_guc_hwconfig.h"
@@ -336,10 +336,6 @@ int xe_guc_init(struct xe_guc *guc)
 	}
 
 	ret = xe_guc_log_init(&guc->log);
-	if (ret)
-		goto out;
-
-	ret = xe_guc_capture_init(guc);
 	if (ret)
 		goto out;
 
