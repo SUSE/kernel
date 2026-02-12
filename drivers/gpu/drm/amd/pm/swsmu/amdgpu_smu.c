@@ -765,6 +765,7 @@ static int smu_early_init(struct amdgpu_ip_block *ip_block)
 	smu->smu_baco.platform_support = false;
 	smu->smu_baco.maco_support = false;
 	smu->user_dpm_profile.fan_mode = -1;
+	smu->power_profile_mode = PP_SMC_POWER_PROFILE_UNKNOWN;
 
 	mutex_init(&smu->message_lock);
 
@@ -1249,6 +1250,21 @@ static bool smu_is_workload_profile_available(struct smu_context *smu,
 	return smu->workload_map && smu->workload_map[profile].valid_mapping;
 }
 
+static void smu_init_power_profile(struct smu_context *smu)
+{
+	if (smu->power_profile_mode == PP_SMC_POWER_PROFILE_UNKNOWN) {
+		if (smu->is_apu ||
+		    !smu_is_workload_profile_available(
+			    smu, PP_SMC_POWER_PROFILE_FULLSCREEN3D))
+			smu->power_profile_mode =
+				PP_SMC_POWER_PROFILE_BOOTUP_DEFAULT;
+		else
+			smu->power_profile_mode =
+				PP_SMC_POWER_PROFILE_FULLSCREEN3D;
+	}
+	smu_power_profile_mode_get(smu, smu->power_profile_mode);
+}
+
 static int smu_sw_init(struct amdgpu_ip_block *ip_block)
 {
 	struct amdgpu_device *adev = ip_block->adev;
@@ -1270,13 +1286,7 @@ static int smu_sw_init(struct amdgpu_ip_block *ip_block)
 	atomic_set(&smu->smu_power.power_gate.vpe_gated, 1);
 	atomic_set(&smu->smu_power.power_gate.umsch_mm_gated, 1);
 
-	if (smu->is_apu ||
-	    !smu_is_workload_profile_available(smu, PP_SMC_POWER_PROFILE_FULLSCREEN3D))
-		smu->power_profile_mode = PP_SMC_POWER_PROFILE_BOOTUP_DEFAULT;
-	else
-		smu->power_profile_mode = PP_SMC_POWER_PROFILE_FULLSCREEN3D;
-	smu_power_profile_mode_get(smu, smu->power_profile_mode);
-
+	smu_init_power_profile(smu);
 	smu->display_config = &adev->pm.pm_display_cfg;
 
 	smu->smu_dpm.dpm_level = AMD_DPM_FORCED_LEVEL_AUTO;
