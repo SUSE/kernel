@@ -416,7 +416,7 @@ static void xe_ggtt_invalidate(struct xe_ggtt *ggtt)
 	 * vs. correct GGTT page. Not particularly a hot code path so blindly
 	 * do a mmio read here which results in GuC reading correct GGTT page.
 	 */
-	xe_mmio_read32(xe_root_mmio_gt(xe), VF_CAP_REG);
+	xe_mmio_read32(xe_root_tile_mmio(xe), VF_CAP_REG);
 
 	/* Each GT in a tile has its own TLB to cache GGTT lookups */
 	ggtt_invalidate_gt_tlb(ggtt->tile->primary_gt);
