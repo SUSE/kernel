@@ -387,6 +387,9 @@ void pci_bus_add_device(struct pci_dev *dev)
 
 	pci_pwrctl_create_devices(dev);
 
+	/* Save config space for error recoverability */
+	pci_save_state(dev);
+
 	/*
 	 * If the PCI device is associated with a pwrctl device with a
 	 * power supply, create a device link between the PCI device and
