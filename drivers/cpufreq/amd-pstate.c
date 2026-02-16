@@ -801,7 +801,6 @@ static int amd_pstate_init_freq(struct amd_cpudata *cpudata)
 	u32 highest_perf, max_freq;
 	u32 nominal_perf, nominal_freq;
 	u32 lowest_nonlinear_perf, lowest_nonlinear_freq;
-	u32 boost_ratio, lowest_nonlinear_ratio;
 	struct cppc_perf_caps cppc_perf;
 
 
@@ -814,13 +813,10 @@ static int amd_pstate_init_freq(struct amd_cpudata *cpudata)
 	nominal_perf = READ_ONCE(cpudata->nominal_perf);
 
 	highest_perf = READ_ONCE(cpudata->highest_perf);
-	boost_ratio = div_u64(highest_perf << SCHED_CAPACITY_SHIFT, nominal_perf);
-	max_freq = (nominal_freq * boost_ratio >> SCHED_CAPACITY_SHIFT);
+	max_freq = div_u64((u64)highest_perf * nominal_freq, nominal_perf);
 
 	lowest_nonlinear_perf = READ_ONCE(cpudata->lowest_nonlinear_perf);
-	lowest_nonlinear_ratio = div_u64(lowest_nonlinear_perf << SCHED_CAPACITY_SHIFT,
-					 nominal_perf);
-	lowest_nonlinear_freq = (nominal_freq * lowest_nonlinear_ratio >> SCHED_CAPACITY_SHIFT);
+	lowest_nonlinear_freq = div_u64((u64)nominal_freq * lowest_nonlinear_perf, nominal_perf);
 
 	WRITE_ONCE(cpudata->min_freq, min_freq * 1000);
 	WRITE_ONCE(cpudata->lowest_nonlinear_freq, lowest_nonlinear_freq * 1000);
