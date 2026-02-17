@@ -339,3 +339,4 @@ static inline bool path_mounted(const struct path *path)
 	return path->mnt->mnt_root == path->dentry;
 }
 void file_f_owner_release(struct file *file);
+struct dentry *find_next_child(struct dentry *parent, struct dentry *prev);
