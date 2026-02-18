@@ -345,6 +345,7 @@ struct mmu_gather {
 	unsigned int		vma_huge : 1;
 	unsigned int		vma_pfn  : 1;
 
+#ifndef __GENKSYMS__
 	/*
 	 * Did we unshare (unmap) any shared page tables? For now only
 	 * used for hugetlb PMD table sharing.
@@ -358,6 +359,66 @@ struct mmu_gather {
 	 * for hugetlb PMD table sharing.
 	 */
 	unsigned int		fully_unshared_tables : 1;
+#endif
+
+	unsigned int            batch_count;
+
+#ifndef CONFIG_MMU_GATHER_NO_GATHER
+	struct mmu_gather_batch *active;
+	struct mmu_gather_batch local;
+	struct page             *__pages[MMU_GATHER_BUNDLE];
+
+#ifdef CONFIG_MMU_GATHER_PAGE_SIZE
+	unsigned int page_size;
+#endif
+#endif
+};
+
+struct __orig_mmu_gather {
+	struct mm_struct        *mm;
+
+#ifdef CONFIG_MMU_GATHER_TABLE_FREE
+	struct mmu_table_batch  *batch;
+#endif
+
+	unsigned long           start;
+	unsigned long           end;
+	/*
+	 * we are in the middle of an operation to clear
+	 * a full mm and can make some optimizations
+	 */
+	unsigned int            fullmm : 1;
+
+	/*
+	 * we have performed an operation which
+	 * requires a complete flush of the tlb
+	 */
+	unsigned int            need_flush_all : 1;
+
+	/*
+	 * we have removed page directories
+	 */
+	unsigned int            freed_tables : 1;
+
+	/*
+	 * Do we have pending delayed rmap removals?
+	 */
+	unsigned int            delayed_rmap : 1;
+
+	/*
+	 * at which levels have we cleared entries?
+	 */
+	unsigned int            cleared_ptes : 1;
+	unsigned int            cleared_pmds : 1;
+	unsigned int            cleared_puds : 1;
+	unsigned int            cleared_p4ds : 1;
+
+	/*
+	 * tracks VM_EXEC | VM_HUGETLB in tlb_start_vma
+	 */
+	unsigned int            vma_exec : 1;
+	unsigned int            vma_huge : 1;
+	unsigned int            vma_pfn  : 1;
 
 	unsigned int		batch_count;
 
@@ -371,6 +432,11 @@ struct mmu_gather {
 #endif
 #endif
 };
+
+suse_kabi_static_assert(offsetof(struct mmu_gather, batch_count) ==
+			offsetof(struct __orig_mmu_gather, batch_count));
+suse_kabi_static_assert(sizeof(struct mmu_gather) ==
+			sizeof(struct __orig_mmu_gather));
 
 void tlb_flush_mmu(struct mmu_gather *tlb);
 
