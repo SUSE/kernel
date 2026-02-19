@@ -46,7 +46,7 @@
 #include <drm/drm_module.h>
 #include <drm/drm_probe_helper.h>
 
-#define DRIVER_NAME "cirrus"
+#define DRIVER_NAME "cirrus-qemu"
 #define DRIVER_DESC "qemu cirrus vga"
 #define DRIVER_DATE "2019"
 #define DRIVER_MAJOR 2
@@ -319,6 +319,7 @@ static void cirrus_pitch_set(struct cirrus_device *cirrus, unsigned int pitch)
 	/* Enable extended blanking and pitch bits, and enable full memory */
 	cr1b = 0x22;
 	cr1b |= (pitch >> 7) & 0x10;
+	cr1b |= (pitch >> 6) & 0x40;
 	wreg_crt(cirrus, 0x1b, cr1b);
 
 	cirrus_set_start_address(cirrus, 0);
