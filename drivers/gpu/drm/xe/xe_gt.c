@@ -744,18 +744,15 @@ static int do_gt_restart(struct xe_gt *gt)
 		xe_gt_sriov_pf_init_hw(gt);
 
 	xe_mocs_init(gt);
-
-	for_each_hw_engine(hwe, gt, id) {
-		xe_reg_sr_apply_mmio(&hwe->reg_sr, gt);
-		xe_reg_sr_apply_whitelist(hwe);
-	}
-
-	/* Get CCS mode in sync between sw/hw */
-	xe_gt_apply_ccs_mode(gt);
-
 	err = xe_uc_start(&gt->uc);
 	if (err)
 		return err;
+
+	for_each_hw_engine(hwe, gt, id)
+		xe_reg_sr_apply_mmio(&hwe->reg_sr, gt);
+
+	/* Get CCS mode in sync between sw/hw */
+	xe_gt_apply_ccs_mode(gt);
 
 	/* Restore GT freq to expected values */
 	xe_gt_sanitize_freq(gt);
