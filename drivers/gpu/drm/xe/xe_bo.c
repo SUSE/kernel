@@ -2048,6 +2048,7 @@ int xe_bo_validate(struct xe_bo *bo, struct xe_vm *vm, bool allow_res_evict)
 		ctx.resv = xe_vm_resv(vm);
 	}
 
+	trace_xe_bo_validate(bo);
 	return ttm_bo_validate(&bo->ttm, &bo->placement, &ctx);
 }
 
