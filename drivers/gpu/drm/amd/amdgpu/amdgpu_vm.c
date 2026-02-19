@@ -543,10 +543,11 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
  * Check if all VM PDs/PTs are ready for updates
  *
  * Returns:
- * True if VM is not evicting and all VM entities are not stopped
+ * True if VM is not evicting.
  */
 bool amdgpu_vm_ready(struct amdgpu_vm *vm)
 {
+	bool empty;
 	bool ret;
 
 	amdgpu_vm_eviction_lock(vm);
@@ -554,18 +555,10 @@ bool amdgpu_vm_ready(struct amdgpu_vm *vm)
 	amdgpu_vm_eviction_unlock(vm);
 
 	spin_lock(&vm->status_lock);
-	ret &= list_empty(&vm->evicted);
+	empty = list_empty(&vm->evicted);
 	spin_unlock(&vm->status_lock);
 
-	spin_lock(&vm->immediate.rq_lock);
-	ret &= !vm->immediate.stopped;
-	spin_unlock(&vm->immediate.rq_lock);
-
-	spin_lock(&vm->delayed.rq_lock);
-	ret &= !vm->delayed.stopped;
-	spin_unlock(&vm->delayed.rq_lock);
-
-	return ret;
+	return ret && empty;
 }
 
 /**
@@ -1091,7 +1084,8 @@ error_free:
 }
 
 static void amdgpu_vm_bo_get_memory(struct amdgpu_bo_va *bo_va,
-				    struct amdgpu_mem_stats *stats)
+				    struct amdgpu_mem_stats *stats,
+				    unsigned int size)
 {
 	struct amdgpu_vm *vm = bo_va->base.vm;
 	struct amdgpu_bo *bo = bo_va->base.bo;
@@ -1107,34 +1101,35 @@ static void amdgpu_vm_bo_get_memory(struct amdgpu_bo_va *bo_va,
 	    !dma_resv_trylock(bo->tbo.base.resv))
 		return;
 
-	amdgpu_bo_get_memory(bo, stats);
+	amdgpu_bo_get_memory(bo, stats, size);
 	if (!amdgpu_vm_is_bo_always_valid(vm, bo))
 		dma_resv_unlock(bo->tbo.base.resv);
 }
 
 void amdgpu_vm_get_memory(struct amdgpu_vm *vm,
-			  struct amdgpu_mem_stats *stats)
+			  struct amdgpu_mem_stats *stats,
+			  unsigned int size)
 {
 	struct amdgpu_bo_va *bo_va, *tmp;
 
 	spin_lock(&vm->status_lock);
 	list_for_each_entry_safe(bo_va, tmp, &vm->idle, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 
 	list_for_each_entry_safe(bo_va, tmp, &vm->evicted, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 
 	list_for_each_entry_safe(bo_va, tmp, &vm->relocated, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 
 	list_for_each_entry_safe(bo_va, tmp, &vm->moved, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 
 	list_for_each_entry_safe(bo_va, tmp, &vm->invalidated, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 
 	list_for_each_entry_safe(bo_va, tmp, &vm->done, base.vm_status)
-		amdgpu_vm_bo_get_memory(bo_va, stats);
+		amdgpu_vm_bo_get_memory(bo_va, stats, size);
 	spin_unlock(&vm->status_lock);
 }
 
@@ -1167,7 +1162,7 @@ int amdgpu_vm_bo_update(struct amdgpu_device *adev, struct amdgpu_bo_va *bo_va,
 	int r;
 
 	amdgpu_sync_create(&sync);
-	if (clear || !bo) {
+	if (clear) {
 		mem = NULL;
 
 		/* Implicitly sync to command submissions in the same VM before
@@ -1182,6 +1177,10 @@ int amdgpu_vm_bo_update(struct amdgpu_device *adev, struct amdgpu_bo_va *bo_va,
 			if (r)
 				goto error_free;
 		}
+	} else if (!bo) {
+		mem = NULL;
+
+		/* PRT map operations don't need to sync to anything. */
 
 	} else {
 		struct drm_gem_object *obj = &bo->tbo.base;

@@ -20,11 +20,14 @@
 #include "ivpu_mmu.h"
 #include "ivpu_ms.h"
 #include "ivpu_pm.h"
+#include "ivpu_trace.h"
 #include "vpu_boot_api.h"
 
 static bool ivpu_disable_recovery;
+#if IS_ENABLED(CONFIG_DRM_ACCEL_IVPU_DEBUG)
 module_param_named_unsafe(disable_recovery, ivpu_disable_recovery, bool, 0644);
 MODULE_PARM_DESC(disable_recovery, "Disables recovery when NPU hang is detected");
+#endif
 
 static unsigned long ivpu_tdr_timeout_ms;
 module_param_named(tdr_timeout_ms, ivpu_tdr_timeout_ms, ulong, 0644);
@@ -214,6 +217,7 @@ int ivpu_pm_suspend_cb(struct device *dev)
 	struct ivpu_device *vdev = to_ivpu_device(drm);
 	unsigned long timeout;
 
+	trace_pm("suspend");
 	ivpu_dbg(vdev, PM, "Suspend..\n");
 
 	timeout = jiffies + msecs_to_jiffies(vdev->timeout.tdr);
@@ -231,6 +235,7 @@ int ivpu_pm_suspend_cb(struct device *dev)
 	ivpu_pm_prepare_warm_boot(vdev);
 
 	ivpu_dbg(vdev, PM, "Suspend done.\n");
+	trace_pm("suspend done");
 
 	return 0;
 }
@@ -241,6 +246,7 @@ int ivpu_pm_resume_cb(struct device *dev)
 	struct ivpu_device *vdev = to_ivpu_device(drm);
 	int ret;
 
+	trace_pm("resume");
 	ivpu_dbg(vdev, PM, "Resume..\n");
 
 	ret = ivpu_resume(vdev);
@@ -248,6 +254,7 @@ int ivpu_pm_resume_cb(struct device *dev)
 		ivpu_err(vdev, "Failed to resume: %d\n", ret);
 
 	ivpu_dbg(vdev, PM, "Resume done.\n");
+	trace_pm("resume done");
 
 	return ret;
 }
@@ -262,6 +269,7 @@ int ivpu_pm_runtime_suspend_cb(struct device *dev)
 	drm_WARN_ON(&vdev->drm, !xa_empty(&vdev->submitted_jobs_xa));
 	drm_WARN_ON(&vdev->drm, work_pending(&vdev->pm->recovery_work));
 
+	trace_pm("runtime suspend");
 	ivpu_dbg(vdev, PM, "Runtime suspend..\n");
 
 	ivpu_mmu_disable(vdev);
@@ -288,6 +296,7 @@ int ivpu_pm_runtime_suspend_cb(struct device *dev)
 	}
 
 	ivpu_dbg(vdev, PM, "Runtime suspend done.\n");
+	trace_pm("runtime suspend done");
 
 	return 0;
 }
@@ -298,6 +307,7 @@ int ivpu_pm_runtime_resume_cb(struct device *dev)
 	struct ivpu_device *vdev = to_ivpu_device(drm);
 	int ret;
 
+	trace_pm("runtime resume");
 	ivpu_dbg(vdev, PM, "Runtime resume..\n");
 
 	ret = ivpu_resume(vdev);
@@ -305,6 +315,7 @@ int ivpu_pm_runtime_resume_cb(struct device *dev)
 		ivpu_err(vdev, "Failed to set RESUME state: %d\n", ret);
 
 	ivpu_dbg(vdev, PM, "Runtime resume done.\n");
+	trace_pm("runtime resume done");
 
 	return ret;
 }
@@ -422,17 +433,16 @@ int ivpu_pm_dct_enable(struct ivpu_device *vdev, u8 active_percent)
 	active_us = (DCT_PERIOD_US * active_percent) / 100;
 	inactive_us = DCT_PERIOD_US - active_us;
 
-	vdev->pm->dct_active_percent = active_percent;
-
-	ivpu_dbg(vdev, PM, "DCT requested %u%% (D0: %uus, D0i2: %uus)\n",
-		 active_percent, active_us, inactive_us);
-
 	ret = ivpu_jsm_dct_enable(vdev, active_us, inactive_us);
 	if (ret) {
-		ivpu_err_ratelimited(vdev, "Filed to enable DCT: %d\n", ret);
+		ivpu_err_ratelimited(vdev, "Failed to enable DCT: %d\n", ret);
 		return ret;
 	}
 
+	vdev->pm->dct_active_percent = active_percent;
+
+	ivpu_dbg(vdev, PM, "DCT set to %u%% (D0: %uus, D0i2: %uus)\n",
+		 active_percent, active_us, inactive_us);
 	return 0;
 }
 
@@ -440,16 +450,15 @@ int ivpu_pm_dct_disable(struct ivpu_device *vdev)
 {
 	int ret;
 
-	vdev->pm->dct_active_percent = 0;
-
-	ivpu_dbg(vdev, PM, "DCT requested to be disabled\n");
-
 	ret = ivpu_jsm_dct_disable(vdev);
 	if (ret) {
-		ivpu_err_ratelimited(vdev, "Filed to disable DCT: %d\n", ret);
+		ivpu_err_ratelimited(vdev, "Failed to disable DCT: %d\n", ret);
 		return ret;
 	}
 
+	vdev->pm->dct_active_percent = 0;
+
+	ivpu_dbg(vdev, PM, "DCT disabled\n");
 	return 0;
 }
 
@@ -461,7 +470,7 @@ void ivpu_pm_dct_irq_thread_handler(struct ivpu_device *vdev)
 	if (ivpu_hw_btrs_dct_get_request(vdev, &enable))
 		return;
 
-	if (enable)
+	if (vdev->pm->dct_active_percent)
 		ret = ivpu_pm_dct_enable(vdev, DCT_DEFAULT_ACTIVE_PERCENT);
 	else
 		ret = ivpu_pm_dct_disable(vdev);

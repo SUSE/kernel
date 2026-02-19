@@ -46,25 +46,27 @@
 #define IVPU_FOCUS_PRESENT_TIMER_MS 1000
 
 static char *ivpu_firmware;
+#if IS_ENABLED(CONFIG_DRM_ACCEL_IVPU_DEBUG)
 module_param_named_unsafe(firmware, ivpu_firmware, charp, 0644);
 MODULE_PARM_DESC(firmware, "NPU firmware binary in /lib/firmware/..");
+#endif
 
 static struct {
 	int gen;
 	const char *name;
 } fw_names[] = {
-	{ IVPU_HW_IP_37XX, "intel/vpu/vpu_37xx_v1.bin" },
+	{ IVPU_HW_IP_37XX, "vpu_37xx.bin" },
 	{ IVPU_HW_IP_37XX, "intel/vpu/vpu_37xx_v0.0.bin" },
-	{ IVPU_HW_IP_40XX, "intel/vpu/vpu_40xx_v1.bin" },
+	{ IVPU_HW_IP_40XX, "vpu_40xx.bin" },
 	{ IVPU_HW_IP_40XX, "intel/vpu/vpu_40xx_v0.0.bin" },
-	{ IVPU_HW_IP_50XX, "intel/vpu/vpu_50xx_v1.bin" },
+	{ IVPU_HW_IP_50XX, "vpu_50xx.bin" },
 	{ IVPU_HW_IP_50XX, "intel/vpu/vpu_50xx_v0.0.bin" },
 };
 
 /* Production fw_names from the table above */
-MODULE_FIRMWARE("intel/vpu/vpu_37xx_v1.bin");
-MODULE_FIRMWARE("intel/vpu/vpu_40xx_v1.bin");
-MODULE_FIRMWARE("intel/vpu/vpu_50xx_v1.bin");
+MODULE_FIRMWARE("intel/vpu/vpu_37xx_v0.0.bin");
+MODULE_FIRMWARE("intel/vpu/vpu_40xx_v0.0.bin");
+MODULE_FIRMWARE("intel/vpu/vpu_50xx_v0.0.bin");
 
 static int ivpu_fw_request(struct ivpu_device *vdev)
 {

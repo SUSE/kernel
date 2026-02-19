@@ -5,10 +5,11 @@
 
 #include "xe_device.h"
 
+#include <linux/aperture.h>
 #include <linux/delay.h>
+#include <linux/fault-inject.h>
 #include <linux/units.h>
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_client.h>
 #include <drm/drm_gem_ttm_helper.h>
@@ -37,7 +38,6 @@
 #include "xe_gt_printk.h"
 #include "xe_gt_sriov_vf.h"
 #include "xe_guc.h"
-#include "xe_guc_pc.h"
 #include "xe_hw_engine_group.h"
 #include "xe_hwmon.h"
 #include "xe_irq.h"
@@ -302,7 +302,7 @@ struct xe_device *xe_device_create(struct pci_dev *pdev,
 
 	xe_display_driver_set_hooks(&driver);
 
-	err = drm_aperture_remove_conflicting_pci_framebuffers(pdev, &driver);
+	err = aperture_remove_conflicting_pci_devices(pdev, driver.name);
 	if (err)
 		return ERR_PTR(err);
 
@@ -375,10 +375,11 @@ struct xe_device *xe_device_create(struct pci_dev *pdev,
 err:
 	return ERR_PTR(err);
 }
+ALLOW_ERROR_INJECTION(xe_device_create, ERRNO); /* See xe_pci_probe() */
 
 static bool xe_driver_flr_disabled(struct xe_device *xe)
 {
-	return xe_mmio_read32(xe_root_mmio_gt(xe), GU_CNTL_PROTECTED) & DRIVERINT_FLR_DIS;
+	return xe_mmio_read32(xe_root_tile_mmio(xe), GU_CNTL_PROTECTED) & DRIVERINT_FLR_DIS;
 }
 
 /*
@@ -397,7 +398,7 @@ static bool xe_driver_flr_disabled(struct xe_device *xe)
 static void __xe_driver_flr(struct xe_device *xe)
 {
 	const unsigned int flr_timeout = 3 * MICRO; /* specs recommend a 3s wait */
-	struct xe_gt *gt = xe_root_mmio_gt(xe);
+	struct xe_mmio *mmio = xe_root_tile_mmio(xe);
 	int ret;
 
 	drm_dbg(&xe->drm, "Triggering Driver-FLR\n");
@@ -411,25 +412,25 @@ static void __xe_driver_flr(struct xe_device *xe)
 	 * is still pending (unless the HW is totally dead), but better to be
 	 * safe in case something unexpected happens
 	 */
-	ret = xe_mmio_wait32(gt, GU_CNTL, DRIVERFLR, 0, flr_timeout, NULL, false);
+	ret = xe_mmio_wait32(mmio, GU_CNTL, DRIVERFLR, 0, flr_timeout, NULL, false);
 	if (ret) {
 		drm_err(&xe->drm, "Driver-FLR-prepare wait for ready failed! %d\n", ret);
 		return;
 	}
-	xe_mmio_write32(gt, GU_DEBUG, DRIVERFLR_STATUS);
+	xe_mmio_write32(mmio, GU_DEBUG, DRIVERFLR_STATUS);
 
 	/* Trigger the actual Driver-FLR */
-	xe_mmio_rmw32(gt, GU_CNTL, 0, DRIVERFLR);
+	xe_mmio_rmw32(mmio, GU_CNTL, 0, DRIVERFLR);
 
 	/* Wait for hardware teardown to complete */
-	ret = xe_mmio_wait32(gt, GU_CNTL, DRIVERFLR, 0, flr_timeout, NULL, false);
+	ret = xe_mmio_wait32(mmio, GU_CNTL, DRIVERFLR, 0, flr_timeout, NULL, false);
 	if (ret) {
 		drm_err(&xe->drm, "Driver-FLR-teardown wait completion failed! %d\n", ret);
 		return;
 	}
 
 	/* Wait for hardware/firmware re-init to complete */
-	ret = xe_mmio_wait32(gt, GU_DEBUG, DRIVERFLR_STATUS, DRIVERFLR_STATUS,
+	ret = xe_mmio_wait32(mmio, GU_DEBUG, DRIVERFLR_STATUS, DRIVERFLR_STATUS,
 			     flr_timeout, NULL, false);
 	if (ret) {
 		drm_err(&xe->drm, "Driver-FLR-reinit wait completion failed! %d\n", ret);
@@ -437,7 +438,7 @@ static void __xe_driver_flr(struct xe_device *xe)
 	}
 
 	/* Clear sticky completion status */
-	xe_mmio_write32(gt, GU_DEBUG, DRIVERFLR_STATUS);
+	xe_mmio_write32(mmio, GU_DEBUG, DRIVERFLR_STATUS);
 }
 
 static void xe_driver_flr(struct xe_device *xe)
@@ -490,16 +491,15 @@ mask_err:
 	return err;
 }
 
-static bool verify_lmem_ready(struct xe_gt *gt)
+static bool verify_lmem_ready(struct xe_device *xe)
 {
-	u32 val = xe_mmio_read32(gt, GU_CNTL) & LMEM_INIT;
+	u32 val = xe_mmio_read32(xe_root_tile_mmio(xe), GU_CNTL) & LMEM_INIT;
 
 	return !!val;
 }
 
 static int wait_for_lmem_ready(struct xe_device *xe)
 {
-	struct xe_gt *gt = xe_root_mmio_gt(xe);
 	unsigned long timeout, start;
 
 	if (!IS_DGFX(xe))
@@ -508,7 +508,7 @@ static int wait_for_lmem_ready(struct xe_device *xe)
 	if (IS_SRIOV_VF(xe))
 		return 0;
 
-	if (verify_lmem_ready(gt))
+	if (verify_lmem_ready(xe))
 		return 0;
 
 	drm_dbg(&xe->drm, "Waiting for lmem initialization\n");
@@ -537,13 +537,14 @@ static int wait_for_lmem_ready(struct xe_device *xe)
 
 		msleep(20);
 
-	} while (!verify_lmem_ready(gt));
+	} while (!verify_lmem_ready(xe));
 
 	drm_dbg(&xe->drm, "lmem ready after %ums",
 		jiffies_to_msecs(jiffies - start));
 
 	return 0;
 }
+ALLOW_ERROR_INJECTION(wait_for_lmem_ready, ERRNO); /* See xe_pci_probe() */
 
 static void update_device_info(struct xe_device *xe)
 {
@@ -592,19 +593,21 @@ int xe_device_probe_early(struct xe_device *xe)
 	return 0;
 }
 
-static int xe_device_set_has_flat_ccs(struct  xe_device *xe)
+static int probe_has_flat_ccs(struct xe_device *xe)
 {
+	struct xe_gt *gt;
+	unsigned int fw_ref;
 	u32 reg;
-	int err;
 
+	/* Always enabled/disabled, no runtime check to do */
 	if (GRAPHICS_VER(xe) < 20 || !xe->info.has_flat_ccs)
 		return 0;
 
-	struct xe_gt *gt = xe_root_mmio_gt(xe);
+	gt = xe_root_mmio_gt(xe);
 
-	err = xe_force_wake_get(gt_to_fw(gt), XE_FW_GT);
-	if (err)
-		return err;
+	fw_ref = xe_force_wake_get(gt_to_fw(gt), XE_FW_GT);
+	if (!fw_ref)
+		return -ETIMEDOUT;
 
 	reg = xe_gt_mcr_unicast_read_any(gt, XE2_FLAT_CCS_BASE_RANGE_LOWER);
 	xe->info.has_flat_ccs = (reg & XE2_FLAT_CCS_ENABLE);
@@ -613,7 +616,8 @@ static int xe_device_set_has_flat_ccs(struct  xe_device *xe)
 		drm_dbg(&xe->drm,
 			"Flat CCS has been disabled in bios, May lead to performance impact");
 
-	return xe_force_wake_put(gt_to_fw(gt), XE_FW_GT);
+	xe_force_wake_put(gt_to_fw(gt), fw_ref);
+	return 0;
 }
 
 int xe_device_probe(struct xe_device *xe)
@@ -649,6 +653,13 @@ int xe_device_probe(struct xe_device *xe)
 		err = xe_gt_init_early(gt);
 		if (err)
 			return err;
+
+		/*
+		 * Only after this point can GT-specific MMIO operations
+		 * (including things like communication with the GuC)
+		 * be performed.
+		 */
+		xe_gt_mmio_init(gt);
 	}
 
 	for_each_tile(tile, xe, id) {
@@ -664,11 +675,9 @@ int xe_device_probe(struct xe_device *xe)
 		err = xe_ggtt_init_early(tile->mem.ggtt);
 		if (err)
 			return err;
-		if (IS_SRIOV_VF(xe)) {
-			err = xe_memirq_init(&tile->sriov.vf.memirq);
-			if (err)
-				return err;
-		}
+		err = xe_memirq_init(&tile->memirq);
+		if (err)
+			return err;
 	}
 
 	for_each_gt(gt, xe, id) {
@@ -692,7 +701,7 @@ int xe_device_probe(struct xe_device *xe)
 	if (err)
 		goto err;
 
-	err = xe_device_set_has_flat_ccs(xe);
+	err = probe_has_flat_ccs(xe);
 	if (err)
 		goto err;
 
@@ -842,11 +851,9 @@ void xe_device_shutdown(struct xe_device *xe)
  */
 void xe_device_wmb(struct xe_device *xe)
 {
-	struct xe_gt *gt = xe_root_mmio_gt(xe);
-
 	wmb();
 	if (IS_DGFX(xe))
-		xe_mmio_write32(gt, VF_CAP_REG, 0);
+		xe_mmio_write32(xe_root_tile_mmio(xe), VF_CAP_REG, 0);
 }
 
 /**
@@ -870,67 +877,63 @@ void xe_device_wmb(struct xe_device *xe)
 void xe_device_td_flush(struct xe_device *xe)
 {
 	struct xe_gt *gt;
+	unsigned int fw_ref;
 	u8 id;
 
 	if (!IS_DGFX(xe) || GRAPHICS_VER(xe) < 20)
 		return;
 
-	gt = xe_root_mmio_gt(xe);
-	if (XE_WA(gt, 16023588340)) {
-		/* A transient flush is not sufficient: flush the L2 */
+	if (XE_WA(xe_root_mmio_gt(xe), 16023588340)) {
 		xe_device_l2_flush(xe);
-	} else {
-		xe_guc_pc_apply_flush_freq_limit(&gt->uc.guc.pc);
-		
-		/* Execute TDF flush on all graphics GTs */
-		for_each_gt(gt, xe, id) {
-			if (xe_gt_is_media_type(gt))
-				continue;
+		return;
+	}
 
-			if (xe_force_wake_get(gt_to_fw(gt), XE_FW_GT))
-				return;
+	for_each_gt(gt, xe, id) {
+		if (xe_gt_is_media_type(gt))
+			continue;
 
-			xe_mmio_write32(gt, XE2_TDF_CTRL, TRANSIENT_FLUSH_REQUEST);
-			/*
-			 * FIXME: We can likely do better here with our choice of
-			 * timeout. Currently we just assume the worst case, i.e. 150us,
-			 * which is believed to be sufficient to cover the worst case
-			 * scenario on current platforms if all cache entries are
-			 * transient and need to be flushed..
-			 */
-			if (xe_mmio_wait32(gt, XE2_TDF_CTRL, TRANSIENT_FLUSH_REQUEST, 0,
-					   150, NULL, false))
-				xe_gt_err_once(gt, "TD flush timeout\n");
+		fw_ref = xe_force_wake_get(gt_to_fw(gt), XE_FW_GT);
+		if (!fw_ref)
+			return;
 
-			xe_force_wake_put(gt_to_fw(gt), XE_FW_GT);
-		}
-		
-		xe_guc_pc_remove_flush_freq_limit(&xe_root_mmio_gt(xe)->uc.guc.pc);
+		xe_mmio_write32(&gt->mmio, XE2_TDF_CTRL, TRANSIENT_FLUSH_REQUEST);
+		/*
+		 * FIXME: We can likely do better here with our choice of
+		 * timeout. Currently we just assume the worst case, i.e. 150us,
+		 * which is believed to be sufficient to cover the worst case
+		 * scenario on current platforms if all cache entries are
+		 * transient and need to be flushed..
+		 */
+		if (xe_mmio_wait32(&gt->mmio, XE2_TDF_CTRL, TRANSIENT_FLUSH_REQUEST, 0,
+				   150, NULL, false))
+			xe_gt_err_once(gt, "TD flush timeout\n");
+
+		xe_force_wake_put(gt_to_fw(gt), fw_ref);
 	}
 }
 
 void xe_device_l2_flush(struct xe_device *xe)
 {
 	struct xe_gt *gt;
-	int err;
+	unsigned int fw_ref;
 
 	gt = xe_root_mmio_gt(xe);
 
 	if (!XE_WA(gt, 16023588340))
 		return;
 
-	err = xe_force_wake_get(gt_to_fw(gt), XE_FW_GT);
-	if (err)
+	fw_ref = xe_force_wake_get(gt_to_fw(gt), XE_FW_GT);
+	if (!fw_ref)
 		return;
 
 	spin_lock(&gt->global_invl_lock);
-	xe_mmio_write32(gt, XE2_GLOBAL_INVAL, 0x1);
+	xe_mmio_write32(&gt->mmio, XE2_GLOBAL_INVAL, 0x1);
 
-	if (xe_mmio_wait32(gt, XE2_GLOBAL_INVAL, 0x1, 0x0, 500, NULL, true))
+	if (xe_mmio_wait32(&gt->mmio, XE2_GLOBAL_INVAL, 0x1, 0x0, 500, NULL, true))
 		xe_gt_err_once(gt, "Global invalidation timeout\n");
 	spin_unlock(&gt->global_invl_lock);
 
-	xe_force_wake_put(gt_to_fw(gt), XE_FW_GT);
+	xe_force_wake_put(gt_to_fw(gt), fw_ref);
 }
 
 u32 xe_device_ccs_bytes(struct xe_device *xe, u64 size)

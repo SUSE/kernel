@@ -2628,9 +2628,9 @@ static int dce_v6_0_crtc_init(struct amdgpu_device *adev, int index)
 	return 0;
 }
 
-static int dce_v6_0_early_init(void *handle)
+static int dce_v6_0_early_init(struct amdgpu_ip_block *ip_block)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 
 	adev->audio_endpt_rreg = &dce_v6_0_audio_endpt_rreg;
 	adev->audio_endpt_wreg = &dce_v6_0_audio_endpt_wreg;
@@ -2659,11 +2659,11 @@ static int dce_v6_0_early_init(void *handle)
 	return 0;
 }
 
-static int dce_v6_0_sw_init(void *handle)
+static int dce_v6_0_sw_init(struct amdgpu_ip_block *ip_block)
 {
 	int r, i;
 	bool ret;
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 
 	for (i = 0; i < adev->mode_info.num_crtc; i++) {
 		r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, i + 1, &adev->crtc_irq);
@@ -2738,9 +2738,9 @@ static int dce_v6_0_sw_init(void *handle)
 	return r;
 }
 
-static int dce_v6_0_sw_fini(void *handle)
+static int dce_v6_0_sw_fini(struct amdgpu_ip_block *ip_block)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 
 	drm_edid_free(adev->mode_info.bios_hardcoded_edid);
 
@@ -2755,10 +2755,10 @@ static int dce_v6_0_sw_fini(void *handle)
 	return 0;
 }
 
-static int dce_v6_0_hw_init(void *handle)
+static int dce_v6_0_hw_init(struct amdgpu_ip_block *ip_block)
 {
 	int i;
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 
 	/* disable vga render */
 	dce_v6_0_set_vga_render_state(adev, false);
@@ -2778,10 +2778,10 @@ static int dce_v6_0_hw_init(void *handle)
 	return 0;
 }
 
-static int dce_v6_0_hw_fini(void *handle)
+static int dce_v6_0_hw_fini(struct amdgpu_ip_block *ip_block)
 {
 	int i;
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 
 	dce_v6_0_hpd_fini(adev);
 
@@ -2796,9 +2796,9 @@ static int dce_v6_0_hw_fini(void *handle)
 	return 0;
 }
 
-static int dce_v6_0_suspend(void *handle)
+static int dce_v6_0_suspend(struct amdgpu_ip_block *ip_block)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 	int r;
 
 	r = amdgpu_display_suspend_helper(adev);
@@ -2807,18 +2807,18 @@ static int dce_v6_0_suspend(void *handle)
 	adev->mode_info.bl_level =
 		amdgpu_atombios_encoder_get_backlight_level_from_reg(adev);
 
-	return dce_v6_0_hw_fini(handle);
+	return dce_v6_0_hw_fini(ip_block);
 }
 
-static int dce_v6_0_resume(void *handle)
+static int dce_v6_0_resume(struct amdgpu_ip_block *ip_block)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	struct amdgpu_device *adev = ip_block->adev;
 	int ret;
 
 	amdgpu_atombios_encoder_set_backlight_level_to_reg(adev,
 							   adev->mode_info.bl_level);
 
-	ret = dce_v6_0_hw_init(handle);
+	ret = dce_v6_0_hw_init(ip_block);
 
 	/* turn on the BL */
 	if (adev->mode_info.bl_encoder) {
@@ -2838,12 +2838,7 @@ static bool dce_v6_0_is_idle(void *handle)
 	return true;
 }
 
-static int dce_v6_0_wait_for_idle(void *handle)
-{
-	return 0;
-}
-
-static int dce_v6_0_soft_reset(void *handle)
+static int dce_v6_0_soft_reset(struct amdgpu_ip_block *ip_block)
 {
 	DRM_INFO("xxxx: dce_v6_0_soft_reset --- no impl!!\n");
 	return 0;
@@ -3139,7 +3134,6 @@ static int dce_v6_0_set_powergating_state(void *handle,
 static const struct amd_ip_funcs dce_v6_0_ip_funcs = {
 	.name = "dce_v6_0",
 	.early_init = dce_v6_0_early_init,
-	.late_init = NULL,
 	.sw_init = dce_v6_0_sw_init,
 	.sw_fini = dce_v6_0_sw_fini,
 	.hw_init = dce_v6_0_hw_init,
@@ -3147,12 +3141,9 @@ static const struct amd_ip_funcs dce_v6_0_ip_funcs = {
 	.suspend = dce_v6_0_suspend,
 	.resume = dce_v6_0_resume,
 	.is_idle = dce_v6_0_is_idle,
-	.wait_for_idle = dce_v6_0_wait_for_idle,
 	.soft_reset = dce_v6_0_soft_reset,
 	.set_clockgating_state = dce_v6_0_set_clockgating_state,
 	.set_powergating_state = dce_v6_0_set_powergating_state,
-	.dump_ip_state = NULL,
-	.print_ip_state = NULL,
 };
 
 static void

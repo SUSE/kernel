@@ -305,6 +305,7 @@ void dcn35_init_hw(struct dc *dc)
 		dc_dmub_srv_query_caps_cmd(dc->ctx->dmub_srv);
 		dc->caps.dmub_caps.psr = dc->ctx->dmub_srv->dmub->feature_caps.psr;
 		dc->caps.dmub_caps.mclk_sw = dc->ctx->dmub_srv->dmub->feature_caps.fw_assisted_mclk_switch_ver;
+		dc->caps.dmub_caps.aux_backlight_support = dc->ctx->dmub_srv->dmub->feature_caps.abm_aux_backlight_support;
 	}
 
 	if (dc->res_pool->pg_cntl) {
@@ -838,6 +839,7 @@ void dcn35_init_pipes(struct dc *dc, struct dc_state *context)
 			uint32_t num_opps = 0;
 			uint32_t opp_id_src0 = OPP_ID_INVALID;
 			uint32_t opp_id_src1 = OPP_ID_INVALID;
+			uint32_t optc_dsc_state = 0;
 
 			// Step 1: To find out which OPTC is running & OPTC DSC is ON
 			// We can't use res_pool->res_cap->num_timing_generator to check
@@ -846,7 +848,6 @@ void dcn35_init_pipes(struct dc *dc, struct dc_state *context)
 			// Some ASICs would be fused display pipes less than the default setting.
 			// In dcnxx_resource_construct function, driver would obatin real information.
 			for (i = 0; i < dc->res_pool->timing_generator_count; i++) {
-				uint32_t optc_dsc_state = 0;
 				struct timing_generator *tg = dc->res_pool->timing_generators[i];
 
 				if (tg->funcs->is_tg_enabled(tg)) {
@@ -861,15 +862,18 @@ void dcn35_init_pipes(struct dc *dc, struct dc_state *context)
 				}
 			}
 
-			// Step 2: To power down DSC but skip DSC  of running OPTC
+			// Step 2: To power down DSC but skip DSC of running OPTC
 			for (i = 0; i < dc->res_pool->res_cap->num_dsc; i++) {
 				struct dcn_dsc_state s  = {0};
 
-				dc->res_pool->dscs[i]->funcs->dsc_read_state(dc->res_pool->dscs[i], &s);
+				/* avoid reading DSC state when it is not in use as it may be power gated */
+				if (optc_dsc_state) {
+					dc->res_pool->dscs[i]->funcs->dsc_read_state(dc->res_pool->dscs[i], &s);
 
-				if ((s.dsc_opp_source == opp_id_src0 || s.dsc_opp_source == opp_id_src1) &&
-					s.dsc_clock_en && s.dsc_fw_en)
-					continue;
+					if ((s.dsc_opp_source == opp_id_src0 || s.dsc_opp_source == opp_id_src1) &&
+						s.dsc_clock_en && s.dsc_fw_en)
+						continue;
+				}
 
 				pg_cntl->funcs->dsc_pg_control(pg_cntl, dc->res_pool->dscs[i]->inst, false);
 			}
@@ -1492,7 +1496,8 @@ void dcn35_set_drr(struct pipe_ctx **pipe_ctx,
 					num_frames = 2 * (frame_rate % 60);
 				}
 			}
-			set_drr_and_clear_adjust_pending(pipe_ctx[i], pipe_ctx[i]->stream, &params);
+			if (tg->funcs->set_drr)
+				tg->funcs->set_drr(tg, &params);
 			if (adjust.v_total_max != 0 && adjust.v_total_min != 0)
 				if (tg->funcs->set_static_screen_control)
 					tg->funcs->set_static_screen_control(

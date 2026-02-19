@@ -141,16 +141,10 @@ static int read_tile_config_fuse(struct ivpu_device *vdev, u32 *tile_fuse_config
 	}
 
 	config = REG_GET_FLD(VPU_HW_BTRS_LNL_TILE_FUSE, CONFIG, fuse);
-	if (!tile_disable_check(config)) {
-		ivpu_err(vdev, "Fuse: Invalid tile disable config (0x%x)\n", config);
-		return -EIO;
-	}
+	if (!tile_disable_check(config))
+		ivpu_warn(vdev, "More than 1 tile disabled, tile fuse config mask: 0x%x\n", config);
 
-	if (config)
-		ivpu_dbg(vdev, MISC, "Fuse: %d tiles enabled. Tile number %d disabled\n",
-			 BTRS_LNL_TILE_MAX_NUM - 1, ffs(config) - 1);
-	else
-		ivpu_dbg(vdev, MISC, "Fuse: All %d tiles enabled\n", BTRS_LNL_TILE_MAX_NUM);
+	ivpu_dbg(vdev, MISC, "Tile disable config mask: 0x%x\n", config);
 
 	*tile_fuse_config = config;
 	return 0;
@@ -313,10 +307,6 @@ static void prepare_wp_request(struct ivpu_device *vdev, struct wp_request *wp, 
 		wp->cdyn = enable ? PLL_CDYN_DEFAULT : 0;
 		wp->epp = enable ? PLL_EPP_DEFAULT : 0;
 	}
-
-	/* Simics cannot start without at least one tile */
-	if (enable && ivpu_is_simics(vdev))
-		wp->cfg = 1;
 }
 
 static int wait_for_pll_lock(struct ivpu_device *vdev, bool enable)
@@ -461,9 +451,6 @@ int ivpu_hw_btrs_d0i3_disable(struct ivpu_device *vdev)
 int ivpu_hw_btrs_wait_for_clock_res_own_ack(struct ivpu_device *vdev)
 {
 	if (ivpu_hw_btrs_gen(vdev) == IVPU_HW_BTRS_MTL)
-		return 0;
-
-	if (ivpu_is_simics(vdev))
 		return 0;
 
 	return REGB_POLL_FLD(VPU_HW_BTRS_LNL_VPU_STATUS, CLOCK_RESOURCE_OWN_ACK, 1, TIMEOUT_US);

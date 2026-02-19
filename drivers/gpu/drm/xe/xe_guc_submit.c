@@ -27,6 +27,7 @@
 #include "xe_gt_clock.h"
 #include "xe_gt_printk.h"
 #include "xe_guc.h"
+#include "xe_guc_capture.h"
 #include "xe_guc_ct.h"
 #include "xe_guc_exec_queue_types.h"
 #include "xe_guc_id_mgr.h"
@@ -748,6 +749,7 @@ guc_exec_queue_run_job(struct drm_sched_job *drm_job)
 	struct xe_exec_queue *q = job->q;
 	struct xe_guc *guc = exec_queue_to_guc(q);
 	struct xe_device *xe = guc_to_xe(guc);
+	struct dma_fence *fence = NULL;
 	bool lr = xe_exec_queue_is_lr(q);
 
 	xe_assert(xe, !(exec_queue_destroyed(q) || exec_queue_pending_disable(q)) ||
@@ -765,12 +767,12 @@ guc_exec_queue_run_job(struct drm_sched_job *drm_job)
 
 	if (lr) {
 		xe_sched_job_set_error(job, -EOPNOTSUPP);
-		return NULL;
-	} else if (test_and_set_bit(JOB_FLAG_SUBMIT, &job->fence->flags)) {
-		return job->fence;
+		dma_fence_put(job->fence);	/* Drop ref from xe_sched_job_arm */
 	} else {
-		return dma_fence_get(job->fence);
+		fence = job->fence;
 	}
+
+	return fence;
 }
 
 static void guc_exec_queue_free_job(struct drm_sched_job *drm_job)
@@ -781,7 +783,7 @@ static void guc_exec_queue_free_job(struct drm_sched_job *drm_job)
 	xe_sched_job_put(job);
 }
 
-static int guc_read_stopped(struct xe_guc *guc)
+int xe_guc_read_stopped(struct xe_guc *guc)
 {
 	return atomic_read(&guc->submission_state.stopped);
 }
@@ -797,7 +799,6 @@ static void disable_scheduling_deregister(struct xe_guc *guc,
 					  struct xe_exec_queue *q)
 {
 	MAKE_SCHED_CONTEXT_ACTION(q, DISABLE);
-	struct xe_device *xe = guc_to_xe(guc);
 	int ret;
 
 	set_min_preemption_timeout(guc, q);
@@ -805,12 +806,12 @@ static void disable_scheduling_deregister(struct xe_guc *guc,
 	ret = wait_event_timeout(guc->ct.wq,
 				 (!exec_queue_pending_enable(q) &&
 				  !exec_queue_pending_disable(q)) ||
-					 guc_read_stopped(guc),
+					 xe_guc_read_stopped(guc),
 				 HZ * 5);
 	if (!ret) {
 		struct xe_gpu_scheduler *sched = &q->guc->sched;
 
-		drm_warn(&xe->drm, "Pending enable/disable failed to respond\n");
+		xe_gt_warn(q->gt, "Pending enable/disable failed to respond\n");
 		xe_sched_submission_start(sched);
 		xe_gt_reset_async(q->gt);
 		xe_sched_tdr_queue_imm(sched);
@@ -939,7 +940,7 @@ static void xe_guc_exec_queue_lr_cleanup(struct work_struct *w)
 		 */
 		ret = wait_event_timeout(guc->ct.wq,
 					 !exec_queue_pending_disable(q) ||
-					 guc_read_stopped(guc), HZ * 5);
+					 xe_guc_read_stopped(guc), HZ * 5);
 		if (!ret) {
 			drm_warn(&xe->drm, "Schedule disable failed to respond");
 			xe_sched_submission_start(sched);
@@ -1017,8 +1018,8 @@ static void enable_scheduling(struct xe_exec_queue *q)
 
 	ret = wait_event_timeout(guc->ct.wq,
 				 !exec_queue_pending_enable(q) ||
-				 guc_read_stopped(guc), HZ * 5);
-	if (!ret || guc_read_stopped(guc)) {
+				 xe_guc_read_stopped(guc), HZ * 5);
+	if (!ret || xe_guc_read_stopped(guc)) {
 		xe_gt_warn(guc_to_gt(guc), "Schedule enable failed to respond");
 		set_exec_queue_banned(q);
 		xe_gt_reset_async(q->gt);
@@ -1073,6 +1074,8 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 	struct xe_gpu_scheduler *sched = &q->guc->sched;
 	struct xe_guc *guc = exec_queue_to_guc(q);
 	const char *process_name = "no process";
+	struct xe_device *xe = guc_to_xe(guc);
+	unsigned int fw_ref;
 	int err = -ETIME;
 	pid_t pid = -1;
 	int i = 0;
@@ -1100,6 +1103,22 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 		exec_queue_destroyed(q);
 
 	/*
+	 * If devcoredump not captured and GuC capture for the job is not ready
+	 * do manual capture first and decide later if we need to use it
+	 */
+	if (!exec_queue_killed(q) && !xe->devcoredump.captured &&
+	    !xe_guc_capture_get_matching_and_lock(job)) {
+		/* take force wake before engine register manual capture */
+		fw_ref = xe_force_wake_get(gt_to_fw(q->gt), XE_FORCEWAKE_ALL);
+		if (!xe_force_wake_ref_has_domain(fw_ref, XE_FORCEWAKE_ALL))
+			xe_gt_info(q->gt, "failed to get forcewake for coredump capture\n");
+
+		xe_engine_snapshot_capture_for_job(job);
+
+		xe_force_wake_put(gt_to_fw(q->gt), fw_ref);
+	}
+
+	/*
 	 * XXX: Sampling timeout doesn't work in wedged mode as we have to
 	 * modify scheduling state to read timestamp. We could read the
 	 * timestamp from a register to accumulate current running time but this
@@ -1123,8 +1142,8 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 			ret = wait_event_timeout(guc->ct.wq,
 						 (!exec_queue_pending_enable(q) &&
 						  !exec_queue_pending_disable(q)) ||
-						 guc_read_stopped(guc), HZ * 5);
-			if (!ret || guc_read_stopped(guc))
+						 xe_guc_read_stopped(guc), HZ * 5);
+			if (!ret || xe_guc_read_stopped(guc))
 				goto trigger_reset;
 
 			/*
@@ -1148,8 +1167,8 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 		smp_rmb();
 		ret = wait_event_timeout(guc->ct.wq,
 					 !exec_queue_pending_disable(q) ||
-					 guc_read_stopped(guc), HZ * 5);
-		if (!ret || guc_read_stopped(guc)) {
+					 xe_guc_read_stopped(guc), HZ * 5);
+		if (!ret || xe_guc_read_stopped(guc)) {
 trigger_reset:
 			if (!ret)
 				xe_gt_warn(guc_to_gt(guc), "Schedule disable failed to respond");
@@ -1354,7 +1373,7 @@ static void suspend_fence_signal(struct xe_exec_queue *q)
 	struct xe_device *xe = guc_to_xe(guc);
 
 	xe_assert(xe, exec_queue_suspended(q) || exec_queue_killed(q) ||
-		  guc_read_stopped(guc));
+		  xe_guc_read_stopped(guc));
 	xe_assert(xe, q->guc->suspend_pending);
 
 	__suspend_fence_signal(q);
@@ -1368,9 +1387,9 @@ static void __guc_exec_queue_process_msg_suspend(struct xe_sched_msg *msg)
 	if (guc_exec_queue_allowed_to_change_state(q) && !exec_queue_suspended(q) &&
 	    exec_queue_enabled(q)) {
 		wait_event(guc->ct.wq, (q->guc->resume_time != RESUME_PENDING ||
-			   guc_read_stopped(guc)) && !exec_queue_pending_disable(q));
+			   xe_guc_read_stopped(guc)) && !exec_queue_pending_disable(q));
 
-		if (!guc_read_stopped(guc)) {
+		if (!xe_guc_read_stopped(guc)) {
 			s64 since_resume_ms =
 				ktime_ms_delta(ktime_get(),
 					       q->guc->resume_time);
@@ -1495,7 +1514,7 @@ static int guc_exec_queue_init(struct xe_exec_queue *q)
 
 	q->entity = &ge->entity;
 
-	if (guc_read_stopped(guc))
+	if (xe_guc_read_stopped(guc))
 		xe_sched_stop(sched);
 
 	mutex_unlock(&guc->submission_state.lock);
@@ -1651,7 +1670,7 @@ static int guc_exec_queue_suspend_wait(struct xe_exec_queue *q)
 	ret = wait_event_interruptible_timeout(q->guc->suspend_wait,
 					       !READ_ONCE(q->guc->suspend_pending) ||
 					       exec_queue_killed(q) ||
-					       guc_read_stopped(guc),
+					       xe_guc_read_stopped(guc),
 					       HZ * 5);
 
 	if (!ret) {
@@ -1760,9 +1779,6 @@ int xe_guc_submit_reset_prepare(struct xe_guc *guc)
 {
 	int ret;
 
-	if (!guc->submission_state.initialized)
-		return 0;
-
 	/*
 	 * Using an atomic here rather than submission_state.lock as this
 	 * function can be called while holding the CT lock (engine reset
@@ -1780,7 +1796,7 @@ int xe_guc_submit_reset_prepare(struct xe_guc *guc)
 void xe_guc_submit_reset_wait(struct xe_guc *guc)
 {
 	wait_event(guc->ct.wq, xe_device_wedged(guc_to_xe(guc)) ||
-		   !guc_read_stopped(guc));
+		   !xe_guc_read_stopped(guc));
 }
 
 void xe_guc_submit_stop(struct xe_guc *guc)
@@ -1789,7 +1805,7 @@ void xe_guc_submit_stop(struct xe_guc *guc)
 	unsigned long index;
 	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, guc_read_stopped(guc) == 1);
+	xe_assert(xe, xe_guc_read_stopped(guc) == 1);
 
 	mutex_lock(&guc->submission_state.lock);
 
@@ -1833,7 +1849,7 @@ int xe_guc_submit_start(struct xe_guc *guc)
 	unsigned long index;
 	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, guc_read_stopped(guc) == 1);
+	xe_assert(xe, xe_guc_read_stopped(guc) == 1);
 
 	mutex_lock(&guc->submission_state.lock);
 	atomic_dec(&guc->submission_state.stopped);
@@ -2025,8 +2041,6 @@ int xe_guc_exec_queue_reset_handler(struct xe_guc *guc, u32 *msg, u32 len)
 	xe_gt_info(gt, "Engine reset: engine_class=%s, logical_mask: 0x%x, guc_id=%d",
 		   xe_hw_engine_class_to_str(q->class), q->logical_mask, guc_id);
 
-	/* FIXME: Do error capture, most likely async */
-
 	trace_xe_exec_queue_reset(q);
 
 	/*
@@ -2038,6 +2052,36 @@ int xe_guc_exec_queue_reset_handler(struct xe_guc *guc, u32 *msg, u32 len)
 	set_exec_queue_reset(q);
 	if (!exec_queue_banned(q) && !exec_queue_check_timeout(q))
 		xe_guc_exec_queue_trigger_cleanup(q);
+
+	return 0;
+}
+
+/*
+ * xe_guc_error_capture_handler - Handler of GuC captured message
+ * @guc: The GuC object
+ * @msg: Point to the message
+ * @len: The message length
+ *
+ * When GuC captured data is ready, GuC will send message
+ * XE_GUC_ACTION_STATE_CAPTURE_NOTIFICATION to host, this function will be
+ * called 1st to check status before process the data comes with the message.
+ *
+ * Returns: error code. 0 if success
+ */
+int xe_guc_error_capture_handler(struct xe_guc *guc, u32 *msg, u32 len)
+{
+	u32 status;
+
+	if (unlikely(len != XE_GUC_ACTION_STATE_CAPTURE_NOTIFICATION_DATA_LEN)) {
+		xe_gt_dbg(guc_to_gt(guc), "Invalid length %u", len);
+		return -EPROTO;
+	}
+
+	status = msg[0] & XE_GUC_STATE_CAPTURE_EVENT_STATUS_MASK;
+	if (status == XE_GUC_STATE_CAPTURE_EVENT_STATUS_NOSPACE)
+		xe_gt_warn(guc_to_gt(guc), "G2H-Error capture no space");
+
+	xe_guc_capture_process(guc);
 
 	return 0;
 }

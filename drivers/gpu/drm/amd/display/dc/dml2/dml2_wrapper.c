@@ -24,8 +24,6 @@
  *
  */
 
-#include <linux/vmalloc.h>
-
 #include "display_mode_core.h"
 #include "dml2_internal_types.h"
 #include "dml2_utils.h"
@@ -211,8 +209,6 @@ static bool optimize_configuration(struct dml2_context *dml2, struct dml2_wrappe
 				p->cur_display_config->output.OutputEncoder[0], p->cur_mode_support_info->DSCEnabled[0]) - 1;
 
 			if (odms_needed <= unused_dpps) {
-				unused_dpps -= odms_needed;
-
 				if (odms_needed == 1) {
 					p->new_policy->ODMUse[0] = dml_odm_use_policy_combine_2to1;
 					optimization_done = true;
@@ -751,7 +747,7 @@ bool dml2_validate(const struct dc *in_dc, struct dc_state *context, struct dml2
 
 static inline struct dml2_context *dml2_allocate_memory(void)
 {
-	return (struct dml2_context *) vzalloc(sizeof(struct dml2_context));
+	return (struct dml2_context *) kzalloc(sizeof(struct dml2_context), GFP_KERNEL);
 }
 
 static void dml2_init(const struct dc *in_dc, const struct dml2_configuration_options *config, struct dml2_context **dml2)
@@ -822,7 +818,7 @@ void dml2_destroy(struct dml2_context *dml2)
 
 	if (dml2->architecture == dml2_architecture_21)
 		dml21_destroy(dml2);
-	vfree(dml2);
+	kfree(dml2);
 }
 
 void dml2_extract_dram_and_fclk_change_support(struct dml2_context *dml2,

@@ -39,21 +39,9 @@
 #define XE_BO_FLAG_NEEDS_64K		BIT(15)
 #define XE_BO_FLAG_NEEDS_2M		BIT(16)
 #define XE_BO_FLAG_GGTT_INVALIDATE	BIT(17)
-#define XE_BO_FLAG_GGTT0                BIT(18)
-#define XE_BO_FLAG_GGTT1                BIT(19)
-#define XE_BO_FLAG_GGTT2                BIT(20)
-#define XE_BO_FLAG_GGTT3                BIT(21)
-#define XE_BO_FLAG_GGTT_ALL             (XE_BO_FLAG_GGTT0 | \
-					 XE_BO_FLAG_GGTT1 | \
-					 XE_BO_FLAG_GGTT2 | \
-					 XE_BO_FLAG_GGTT3)
-
 /* this one is trigger internally only */
 #define XE_BO_FLAG_INTERNAL_TEST	BIT(30)
 #define XE_BO_FLAG_INTERNAL_64K		BIT(31)
-
-#define XE_BO_FLAG_GGTTx(tile) \
-	(XE_BO_FLAG_GGTT0 << (tile)->id)
 
 #define XE_PTE_SHIFT			12
 #define XE_PAGE_SIZE			(1 << XE_PTE_SHIFT)
@@ -173,7 +161,7 @@ static inline void xe_bo_unlock_vm_held(struct xe_bo *bo)
 	}
 }
 
-int xe_bo_pin_external(struct xe_bo *bo, bool in_place);
+int xe_bo_pin_external(struct xe_bo *bo);
 int xe_bo_pin(struct xe_bo *bo);
 void xe_bo_unpin_external(struct xe_bo *bo);
 void xe_bo_unpin(struct xe_bo *bo);
@@ -206,24 +194,14 @@ xe_bo_main_addr(struct xe_bo *bo, size_t page_size)
 }
 
 static inline u32
-__xe_bo_ggtt_addr(struct xe_bo *bo, u8 tile_id)
-{
-	struct xe_ggtt_node *ggtt_node = bo->ggtt_node[tile_id];
-
-	if (XE_WARN_ON(!ggtt_node))
-		return 0;
-
-	XE_WARN_ON(ggtt_node->base.size > bo->size);
-	XE_WARN_ON(ggtt_node->base.start + ggtt_node->base.size > (1ull << 32));
-	return ggtt_node->base.start;
-}
-
-static inline u32
 xe_bo_ggtt_addr(struct xe_bo *bo)
 {
-	xe_assert(xe_bo_device(bo), bo->tile);
+	if (XE_WARN_ON(!bo->ggtt_node))
+		return 0;
 
-	return __xe_bo_ggtt_addr(bo, bo->tile->id);
+	XE_WARN_ON(bo->ggtt_node->base.size > bo->size);
+	XE_WARN_ON(bo->ggtt_node->base.start + bo->ggtt_node->base.size > (1ull << 32));
+	return bo->ggtt_node->base.start;
 }
 
 int xe_bo_vmap(struct xe_bo *bo);
@@ -340,8 +318,7 @@ static inline unsigned int xe_sg_segment_size(struct device *dev)
 	return round_down(max / 2, PAGE_SIZE);
 }
 
-#define i915_gem_object_flush_if_display(obj)		((void)(obj))
-
+#if IS_ENABLED(CONFIG_DRM_XE_KUNIT_TEST)
 /**
  * xe_bo_is_mem_type - Whether the bo currently resides in the given
  * TTM memory type
@@ -355,4 +332,5 @@ static inline bool xe_bo_is_mem_type(struct xe_bo *bo, u32 mem_type)
 	xe_bo_assert_held(bo);
 	return bo->ttm.resource->mem_type == mem_type;
 }
+#endif
 #endif

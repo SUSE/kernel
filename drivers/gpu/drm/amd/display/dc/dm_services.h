@@ -143,7 +143,7 @@ void generic_reg_wait(const struct dc_context *ctx,
 	unsigned int delay_between_poll_us, unsigned int time_out_num_tries,
 	const char *func_name, int line);
 
-unsigned int snprintf_count(char *pBuf, unsigned int bufSize, char *fmt, ...);
+unsigned int snprintf_count(char *pBuf, unsigned int bufSize, const char *fmt, ...);
 
 /* These macros need to be used with soc15 registers in order to retrieve
  * the actual offset.
@@ -303,7 +303,5 @@ void dm_dtn_log_end(struct dc_context *ctx,
 	struct dc_log_buffer_ctx *log_ctx);
 
 char *dce_version_to_string(const int version);
-
-bool dc_supports_vrr(const enum dce_version v);
 
 #endif /* __DM_SERVICES_H__ */

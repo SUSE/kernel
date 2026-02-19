@@ -29,6 +29,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_fixed.h>
 #include <drm/drm_mipi_dsi.h>
+#include <drm/drm_probe_helper.h>
 
 #include "i915_reg.h"
 #include "icl_dsi.h"
@@ -45,6 +46,7 @@
 #include "intel_dsi.h"
 #include "intel_dsi_vbt.h"
 #include "intel_panel.h"
+#include "intel_pfit.h"
 #include "intel_vdsc.h"
 #include "intel_vdsc_regs.h"
 #include "skl_scaler.h"

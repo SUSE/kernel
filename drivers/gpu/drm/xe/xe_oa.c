@@ -196,7 +196,7 @@ static const struct xe_oa_regs *__oa_regs(struct xe_oa_stream *stream)
 
 static u32 xe_oa_hw_tail_read(struct xe_oa_stream *stream)
 {
-	return xe_mmio_read32(stream->gt, __oa_regs(stream)->oa_tail_ptr) &
+	return xe_mmio_read32(&stream->gt->mmio, __oa_regs(stream)->oa_tail_ptr) &
 		OAG_OATAILPTR_MASK;
 }
 
@@ -386,7 +386,7 @@ static int xe_oa_append_reports(struct xe_oa_stream *stream, char __user *buf,
 		struct xe_reg oaheadptr = __oa_regs(stream)->oa_head_ptr;
 
 		spin_lock_irqsave(&stream->oa_buffer.ptr_lock, flags);
-		xe_mmio_write32(stream->gt, oaheadptr,
+		xe_mmio_write32(&stream->gt->mmio, oaheadptr,
 				(head + gtt_offset) & OAG_OAHEADPTR_MASK);
 		stream->oa_buffer.head = head;
 		spin_unlock_irqrestore(&stream->oa_buffer.ptr_lock, flags);
@@ -397,22 +397,23 @@ static int xe_oa_append_reports(struct xe_oa_stream *stream, char __user *buf,
 
 static void xe_oa_init_oa_buffer(struct xe_oa_stream *stream)
 {
+	struct xe_mmio *mmio = &stream->gt->mmio;
 	u32 gtt_offset = xe_bo_ggtt_addr(stream->oa_buffer.bo);
 	u32 oa_buf = gtt_offset | OABUFFER_SIZE_16M | OAG_OABUFFER_MEMORY_SELECT;
 	unsigned long flags;
 
 	spin_lock_irqsave(&stream->oa_buffer.ptr_lock, flags);
 
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_status, 0);
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_head_ptr,
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_status, 0);
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_head_ptr,
 			gtt_offset & OAG_OAHEADPTR_MASK);
 	stream->oa_buffer.head = 0;
 	/*
 	 * PRM says: "This MMIO must be set before the OATAILPTR register and after the
 	 * OAHEADPTR register. This is to enable proper functionality of the overflow bit".
 	 */
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_buffer, oa_buf);
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_tail_ptr,
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_buffer, oa_buf);
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_tail_ptr,
 			gtt_offset & OAG_OATAILPTR_MASK);
 
 	/* Mark that we need updated tail pointer to read from */
@@ -464,21 +465,23 @@ static void xe_oa_enable(struct xe_oa_stream *stream)
 	    stream->hwe->oa_unit->type == DRM_XE_OA_UNIT_TYPE_OAG)
 		val |= OAG_OACONTROL_OA_PES_DISAG_EN;
 
-	xe_mmio_write32(stream->gt, regs->oa_ctrl, val);
+	xe_mmio_write32(&stream->gt->mmio, regs->oa_ctrl, val);
 }
 
 static void xe_oa_disable(struct xe_oa_stream *stream)
 {
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_ctrl, 0);
-	if (xe_mmio_wait32(stream->gt, __oa_regs(stream)->oa_ctrl,
+	struct xe_mmio *mmio = &stream->gt->mmio;
+
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_ctrl, 0);
+	if (xe_mmio_wait32(mmio, __oa_regs(stream)->oa_ctrl,
 			   OAG_OACONTROL_OA_COUNTER_ENABLE, 0, 50000, NULL, false))
 		drm_err(&stream->oa->xe->drm,
 			"wait for OA to be disabled timed out\n");
 
 	if (GRAPHICS_VERx100(stream->oa->xe) <= 1270 && GRAPHICS_VERx100(stream->oa->xe) != 1260) {
 		/* <= XE_METEORLAKE except XE_PVC */
-		xe_mmio_write32(stream->gt, OA_TLB_INV_CR, 1);
-		if (xe_mmio_wait32(stream->gt, OA_TLB_INV_CR, 1, 0, 50000, NULL, false))
+		xe_mmio_write32(mmio, OA_TLB_INV_CR, 1);
+		if (xe_mmio_wait32(mmio, OA_TLB_INV_CR, 1, 0, 50000, NULL, false))
 			drm_err(&stream->oa->xe->drm,
 				"wait for OA tlb invalidate timed out\n");
 	}
@@ -501,7 +504,7 @@ static int __xe_oa_read(struct xe_oa_stream *stream, char __user *buf,
 			size_t count, size_t *offset)
 {
 	/* Only clear our bits to avoid side-effects */
-	stream->oa_status = xe_mmio_rmw32(stream->gt, __oa_regs(stream)->oa_status,
+	stream->oa_status = xe_mmio_rmw32(&stream->gt->mmio, __oa_regs(stream)->oa_status,
 					  OASTATUS_RELEVANT_BITS, 0);
 	/*
 	 * Signal to userspace that there is non-zero OA status to read via
@@ -766,7 +769,8 @@ static int xe_oa_configure_oac_context(struct xe_oa_stream *stream, bool enable)
 	};
 
 	/* Set ccs select to enable programming of OAC_OACONTROL */
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_ctrl, __oa_ccs_select(stream));
+	xe_mmio_write32(&stream->gt->mmio, __oa_regs(stream)->oa_ctrl,
+			__oa_ccs_select(stream));
 
 	return xe_oa_load_with_lri(stream, reg_lri, ARRAY_SIZE(reg_lri));
 }
@@ -795,6 +799,7 @@ static u32 oag_configure_mmio_trigger(const struct xe_oa_stream *stream, bool en
 
 static void xe_oa_disable_metric_set(struct xe_oa_stream *stream)
 {
+	struct xe_mmio *mmio = &stream->gt->mmio;
 	u32 sqcnt1;
 
 	/*
@@ -808,7 +813,7 @@ static void xe_oa_disable_metric_set(struct xe_oa_stream *stream)
 					  _MASKED_BIT_DISABLE(DISABLE_DOP_GATING));
 	}
 
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_debug,
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_debug,
 			oag_configure_mmio_trigger(stream, false));
 
 	/* disable the context save/restore or OAR counters */
@@ -816,13 +821,13 @@ static void xe_oa_disable_metric_set(struct xe_oa_stream *stream)
 		xe_oa_configure_oa_context(stream, false);
 
 	/* Make sure we disable noa to save power. */
-	xe_mmio_rmw32(stream->gt, RPM_CONFIG1, GT_NOA_ENABLE, 0);
+	xe_mmio_rmw32(mmio, RPM_CONFIG1, GT_NOA_ENABLE, 0);
 
 	sqcnt1 = SQCNT1_PMON_ENABLE |
 		 (HAS_OA_BPC_REPORTING(stream->oa->xe) ? SQCNT1_OABPC : 0);
 
 	/* Reset PMON Enable to save power. */
-	xe_mmio_rmw32(stream->gt, XELPMP_SQCNT1, sqcnt1, 0);
+	xe_mmio_rmw32(mmio, XELPMP_SQCNT1, sqcnt1, 0);
 }
 
 static void xe_oa_stream_destroy(struct xe_oa_stream *stream)
@@ -842,7 +847,7 @@ static void xe_oa_stream_destroy(struct xe_oa_stream *stream)
 
 	xe_oa_free_oa_buffer(stream);
 
-	XE_WARN_ON(xe_force_wake_put(gt_to_fw(gt), XE_FORCEWAKE_ALL));
+	xe_force_wake_put(gt_to_fw(gt), XE_FORCEWAKE_ALL);
 	xe_pm_runtime_put(stream->oa->xe);
 
 	/* Wa_1509372804:pvc: Unset the override of GUCRC mode to enable rc6 */
@@ -1041,6 +1046,7 @@ static u32 oag_report_ctx_switches(const struct xe_oa_stream *stream)
 
 static int xe_oa_enable_metric_set(struct xe_oa_stream *stream)
 {
+	struct xe_mmio *mmio = &stream->gt->mmio;
 	u32 oa_debug, sqcnt1;
 	int ret;
 
@@ -1067,12 +1073,12 @@ static int xe_oa_enable_metric_set(struct xe_oa_stream *stream)
 			OAG_OA_DEBUG_DISABLE_START_TRG_2_COUNT_QUAL |
 			OAG_OA_DEBUG_DISABLE_START_TRG_1_COUNT_QUAL;
 
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_debug,
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_debug,
 			_MASKED_BIT_ENABLE(oa_debug) |
 			oag_report_ctx_switches(stream) |
 			oag_configure_mmio_trigger(stream, true));
 
-	xe_mmio_write32(stream->gt, __oa_regs(stream)->oa_ctx_ctrl, stream->periodic ?
+	xe_mmio_write32(mmio, __oa_regs(stream)->oa_ctx_ctrl, stream->periodic ?
 			(OAG_OAGLBCTXCTRL_COUNTER_RESUME |
 			 OAG_OAGLBCTXCTRL_TIMER_ENABLE |
 			 REG_FIELD_PREP(OAG_OAGLBCTXCTRL_TIMER_PERIOD_MASK,
@@ -1086,7 +1092,7 @@ static int xe_oa_enable_metric_set(struct xe_oa_stream *stream)
 	sqcnt1 = SQCNT1_PMON_ENABLE |
 		 (HAS_OA_BPC_REPORTING(stream->oa->xe) ? SQCNT1_OABPC : 0);
 
-	xe_mmio_rmw32(stream->gt, XELPMP_SQCNT1, 0, sqcnt1);
+	xe_mmio_rmw32(mmio, XELPMP_SQCNT1, 0, sqcnt1);
 
 	/* Configure OAR/OAC */
 	if (stream->exec_q) {
@@ -1711,6 +1717,7 @@ static int xe_oa_stream_init(struct xe_oa_stream *stream,
 {
 	struct xe_oa_unit *u = param->hwe->oa_unit;
 	struct xe_gt *gt = param->hwe->gt;
+	unsigned int fw_ref;
 	int ret;
 
 	stream->exec_q = param->exec_q;
@@ -1775,7 +1782,11 @@ static int xe_oa_stream_init(struct xe_oa_stream *stream,
 
 	/* Take runtime pm ref and forcewake to disable RC6 */
 	xe_pm_runtime_get(stream->oa->xe);
-	XE_WARN_ON(xe_force_wake_get(gt_to_fw(gt), XE_FORCEWAKE_ALL));
+	fw_ref = xe_force_wake_get(gt_to_fw(gt), XE_FORCEWAKE_ALL);
+	if (!xe_force_wake_ref_has_domain(fw_ref, XE_FORCEWAKE_ALL)) {
+		ret = -ETIMEDOUT;
+		goto err_fw_put;
+	}
 
 	ret = xe_oa_alloc_oa_buffer(stream);
 	if (ret)
@@ -1817,7 +1828,7 @@ err_put_k_exec_q:
 err_free_oa_buf:
 	xe_oa_free_oa_buffer(stream);
 err_fw_put:
-	XE_WARN_ON(xe_force_wake_put(gt_to_fw(gt), XE_FORCEWAKE_ALL));
+	xe_force_wake_put(gt_to_fw(gt), fw_ref);
 	xe_pm_runtime_put(stream->oa->xe);
 	if (stream->override_gucrc)
 		xe_gt_WARN_ON(gt, xe_guc_pc_unset_gucrc_mode(&gt->uc.guc.pc));
@@ -1902,7 +1913,7 @@ u32 xe_oa_timestamp_frequency(struct xe_gt *gt)
 	case XE_PVC:
 	case XE_METEORLAKE:
 		xe_pm_runtime_get(gt_to_xe(gt));
-		reg = xe_mmio_read32(gt, RPM_CONFIG0);
+		reg = xe_mmio_read32(&gt->mmio, RPM_CONFIG0);
 		xe_pm_runtime_put(gt_to_xe(gt));
 
 		shift = REG_FIELD_GET(RPM_CONFIG0_CTC_SHIFT_PARAMETER_MASK, reg);
@@ -2566,7 +2577,7 @@ static void __xe_oa_init_oa_units(struct xe_gt *gt)
 		}
 
 		/* Ensure MMIO trigger remains disabled till there is a stream */
-		xe_mmio_write32(gt, u->regs.oa_debug,
+		xe_mmio_write32(&gt->mmio, u->regs.oa_debug,
 				oag_configure_mmio_trigger(NULL, false));
 
 		/* Set oa_unit_ids now to ensure ids remain contiguous */

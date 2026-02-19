@@ -8,7 +8,6 @@
 #include <linux/bitfield.h>
 #include <linux/highmem.h>
 #include <linux/pci.h>
-#include <linux/pm_runtime.h>
 #include <linux/module.h>
 #include <uapi/drm/ivpu_accel.h>
 
@@ -19,6 +18,7 @@
 #include "ivpu_job.h"
 #include "ivpu_jsm_msg.h"
 #include "ivpu_pm.h"
+#include "ivpu_trace.h"
 #include "vpu_boot_api.h"
 
 #define CMD_BUF_IDX	     0
@@ -34,24 +34,20 @@ static int ivpu_preemption_buffers_create(struct ivpu_device *vdev,
 {
 	u64 primary_size = ALIGN(vdev->fw->primary_preempt_buf_size, PAGE_SIZE);
 	u64 secondary_size = ALIGN(vdev->fw->secondary_preempt_buf_size, PAGE_SIZE);
-	struct ivpu_addr_range range;
 
-	if (vdev->fw->sched_mode != VPU_SCHEDULING_MODE_HW)
+	if (vdev->fw->sched_mode != VPU_SCHEDULING_MODE_HW ||
+	    ivpu_test_mode & IVPU_TEST_MODE_MIP_DISABLE)
 		return 0;
 
-	range.start = vdev->hw->ranges.user.end - (primary_size * IVPU_NUM_CMDQS_PER_CTX);
-	range.end = vdev->hw->ranges.user.end;
-	cmdq->primary_preempt_buf = ivpu_bo_create(vdev, &file_priv->ctx, &range, primary_size,
-						   DRM_IVPU_BO_WC);
+	cmdq->primary_preempt_buf = ivpu_bo_create(vdev, &file_priv->ctx, &vdev->hw->ranges.user,
+						   primary_size, DRM_IVPU_BO_WC);
 	if (!cmdq->primary_preempt_buf) {
 		ivpu_err(vdev, "Failed to create primary preemption buffer\n");
 		return -ENOMEM;
 	}
 
-	range.start = vdev->hw->ranges.shave.end - (secondary_size * IVPU_NUM_CMDQS_PER_CTX);
-	range.end = vdev->hw->ranges.shave.end;
-	cmdq->secondary_preempt_buf = ivpu_bo_create(vdev, &file_priv->ctx, &range, secondary_size,
-						     DRM_IVPU_BO_WC);
+	cmdq->secondary_preempt_buf = ivpu_bo_create(vdev, &file_priv->ctx, &vdev->hw->ranges.dma,
+						     secondary_size, DRM_IVPU_BO_WC);
 	if (!cmdq->secondary_preempt_buf) {
 		ivpu_err(vdev, "Failed to create secondary preemption buffer\n");
 		goto err_free_primary;
@@ -87,9 +83,23 @@ static struct ivpu_cmdq *ivpu_cmdq_alloc(struct ivpu_file_priv *file_priv)
 	if (!cmdq)
 		return NULL;
 
+	ret = xa_alloc_cyclic(&vdev->db_xa, &cmdq->db_id, NULL, vdev->db_limit, &vdev->db_next,
+			      GFP_KERNEL);
+	if (ret < 0) {
+		ivpu_err(vdev, "Failed to allocate doorbell id: %d\n", ret);
+		goto err_free_cmdq;
+	}
+
+	ret = xa_alloc_cyclic(&file_priv->cmdq_xa, &cmdq->id, cmdq, file_priv->cmdq_limit,
+			      &file_priv->cmdq_id_next, GFP_KERNEL);
+	if (ret < 0) {
+		ivpu_err(vdev, "Failed to allocate command queue id: %d\n", ret);
+		goto err_erase_db_xa;
+	}
+
 	cmdq->mem = ivpu_bo_create_global(vdev, SZ_4K, DRM_IVPU_BO_WC | DRM_IVPU_BO_MAPPABLE);
 	if (!cmdq->mem)
-		goto err_free_cmdq;
+		goto err_erase_cmdq_xa;
 
 	ret = ivpu_preemption_buffers_create(vdev, file_priv, cmdq);
 	if (ret)
@@ -97,6 +107,10 @@ static struct ivpu_cmdq *ivpu_cmdq_alloc(struct ivpu_file_priv *file_priv)
 
 	return cmdq;
 
+err_erase_cmdq_xa:
+	xa_erase(&file_priv->cmdq_xa, cmdq->id);
+err_erase_db_xa:
+	xa_erase(&vdev->db_xa, cmdq->db_id);
 err_free_cmdq:
 	kfree(cmdq);
 	return NULL;
@@ -172,6 +186,11 @@ ivpu_cmdq_init(struct ivpu_file_priv *file_priv, struct ivpu_cmdq *cmdq, u8 prio
 	jobq_header->engine_idx = VPU_ENGINE_COMPUTE;
 	jobq_header->head = 0;
 	jobq_header->tail = 0;
+	if (ivpu_test_mode & IVPU_TEST_MODE_TURBO) {
+		ivpu_dbg(vdev, JOB, "Turbo mode enabled");
+		jobq_header->flags = VPU_JOB_QUEUE_FLAGS_TURBO_MODE;
+	}
+
 	wmb(); /* Flush WC buffer for jobq->header */
 
 	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_HW) {
@@ -214,88 +233,30 @@ static int ivpu_cmdq_fini(struct ivpu_file_priv *file_priv, struct ivpu_cmdq *cm
 	return 0;
 }
 
-static int ivpu_db_id_alloc(struct ivpu_device *vdev, u32 *db_id)
-{
-	int ret;
-	u32 id;
-
-	ret = xa_alloc_cyclic(&vdev->db_xa, &id, NULL, vdev->db_limit, &vdev->db_next, GFP_KERNEL);
-	if (ret < 0)
-		return ret;
-
-	*db_id = id;
-	return 0;
-}
-
-static int ivpu_cmdq_id_alloc(struct ivpu_file_priv *file_priv, u32 *cmdq_id)
-{
-	int ret;
-	u32 id;
-
-	ret = xa_alloc_cyclic(&file_priv->cmdq_xa, &id, NULL, file_priv->cmdq_limit,
-			      &file_priv->cmdq_id_next, GFP_KERNEL);
-	if (ret < 0)
-		return ret;
-
-	*cmdq_id = id;
-	return 0;
-}
-
 static struct ivpu_cmdq *ivpu_cmdq_acquire(struct ivpu_file_priv *file_priv, u8 priority)
 {
-	struct ivpu_device *vdev = file_priv->vdev;
 	struct ivpu_cmdq *cmdq;
-	unsigned long id;
+	unsigned long cmdq_id;
 	int ret;
 
 	lockdep_assert_held(&file_priv->lock);
 
-	xa_for_each(&file_priv->cmdq_xa, id, cmdq)
+	xa_for_each(&file_priv->cmdq_xa, cmdq_id, cmdq)
 		if (cmdq->priority == priority)
 			break;
 
 	if (!cmdq) {
 		cmdq = ivpu_cmdq_alloc(file_priv);
-		if (!cmdq) {
-			ivpu_err(vdev, "Failed to allocate command queue\n");
+		if (!cmdq)
 			return NULL;
-		}
-
-		ret = ivpu_db_id_alloc(vdev, &cmdq->db_id);
-		if (ret) {
-			ivpu_err(file_priv->vdev, "Failed to allocate doorbell ID: %d\n", ret);
-			goto err_free_cmdq;
-		}
-
-		ret = ivpu_cmdq_id_alloc(file_priv, &cmdq->id);
-		if (ret) {
-			ivpu_err(vdev, "Failed to allocate command queue ID: %d\n", ret);
-			goto err_erase_db_id;
-		}
-
 		cmdq->priority = priority;
-		ret = xa_err(xa_store(&file_priv->cmdq_xa, cmdq->id, cmdq, GFP_KERNEL));
-		if (ret) {
-			ivpu_err(vdev, "Failed to store command queue in cmdq_xa: %d\n", ret);
-			goto err_erase_cmdq_id;
-		}
 	}
 
 	ret = ivpu_cmdq_init(file_priv, cmdq, priority);
-	if (ret) {
-		ivpu_err(vdev, "Failed to initialize command queue: %d\n", ret);
-		goto err_free_cmdq;
-	}
+	if (ret)
+		return NULL;
 
 	return cmdq;
-
-err_erase_cmdq_id:
-	xa_erase(&file_priv->cmdq_xa, cmdq->id);
-err_erase_db_id:
-	xa_erase(&vdev->db_xa, cmdq->db_id);
-err_free_cmdq:
-	ivpu_cmdq_free(file_priv, cmdq);
-	return NULL;
 }
 
 void ivpu_cmdq_release_all_locked(struct ivpu_file_priv *file_priv)
@@ -363,8 +324,6 @@ void ivpu_context_abort_locked(struct ivpu_file_priv *file_priv)
 
 	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_OS)
 		ivpu_jsm_context_release(vdev, file_priv->ctx.id);
-
-	file_priv->aborted = true;
 }
 
 static int ivpu_cmdq_push_job(struct ivpu_cmdq *cmdq, struct ivpu_job *job)
@@ -389,8 +348,7 @@ static int ivpu_cmdq_push_job(struct ivpu_cmdq *cmdq, struct ivpu_job *job)
 	if (unlikely(ivpu_test_mode & IVPU_TEST_MODE_NULL_SUBMISSION))
 		entry->flags = VPU_JOB_FLAGS_NULL_SUBMISSION_MASK;
 
-	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_HW &&
-	    (unlikely(!(ivpu_test_mode & IVPU_TEST_MODE_PREEMPTION_DISABLE)))) {
+	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_HW) {
 		if (cmdq->primary_preempt_buf) {
 			entry->primary_preempt_buf_addr = cmdq->primary_preempt_buf->vpu_addr;
 			entry->primary_preempt_buf_size = ivpu_bo_size(cmdq->primary_preempt_buf);
@@ -491,6 +449,7 @@ ivpu_job_create(struct ivpu_file_priv *file_priv, u32 engine_idx, u32 bo_count)
 
 	job->file_priv = ivpu_file_priv_get(file_priv);
 
+	trace_job("create", job);
 	ivpu_dbg(vdev, JOB, "Job created: ctx %2d engine %d", file_priv->ctx.id, job->engine_idx);
 	return job;
 
@@ -503,13 +462,15 @@ static struct ivpu_job *ivpu_job_remove_from_submitted_jobs(struct ivpu_device *
 {
 	struct ivpu_job *job;
 
-	lockdep_assert_held(&vdev->submitted_jobs_lock);
+	xa_lock(&vdev->submitted_jobs_xa);
+	job = __xa_erase(&vdev->submitted_jobs_xa, job_id);
 
-	job = xa_erase(&vdev->submitted_jobs_xa, job_id);
 	if (xa_empty(&vdev->submitted_jobs_xa) && job) {
 		vdev->busy_time = ktime_add(ktime_sub(ktime_get(), vdev->busy_start_ts),
 					    vdev->busy_time);
 	}
+
+	xa_unlock(&vdev->submitted_jobs_xa);
 
 	return job;
 }
@@ -517,28 +478,6 @@ static struct ivpu_job *ivpu_job_remove_from_submitted_jobs(struct ivpu_device *
 static int ivpu_job_signal_and_destroy(struct ivpu_device *vdev, u32 job_id, u32 job_status)
 {
 	struct ivpu_job *job;
-
-	lockdep_assert_held(&vdev->submitted_jobs_lock);
-
-	job = xa_load(&vdev->submitted_jobs_xa, job_id);
-	if (!job)
-		return -ENOENT;
-
-	if (job_status == VPU_JSM_STATUS_MVNCI_CONTEXT_VIOLATION_HW) {
-		guard(mutex)(&job->file_priv->lock);
-
-		if (job->file_priv->has_mmu_faults)
-			return 0;
-
-		/*
-		 * Mark context as faulty and defer destruction of the job to jobs abort thread
-		 * handler to synchronize between both faults and jobs returning context violation
-		 * status and ensure both are handled in the same way
-		 */
-		job->file_priv->has_mmu_faults = true;
-		queue_work(system_wq, &vdev->context_abort_work);
-		return 0;
-	}
 
 	job = ivpu_job_remove_from_submitted_jobs(vdev, job_id);
 	if (!job)
@@ -550,6 +489,7 @@ static int ivpu_job_signal_and_destroy(struct ivpu_device *vdev, u32 job_id, u32
 	job->bos[CMD_BUF_IDX]->job_status = job_status;
 	dma_fence_signal(job->done_fence);
 
+	trace_job("done", job);
 	ivpu_dbg(vdev, JOB, "Job complete:  id %3u ctx %2d engine %d status 0x%x\n",
 		 job->job_id, job->file_priv->ctx.id, job->engine_idx, job_status);
 
@@ -557,10 +497,6 @@ static int ivpu_job_signal_and_destroy(struct ivpu_device *vdev, u32 job_id, u32
 	ivpu_stop_job_timeout_detection(vdev);
 
 	ivpu_rpm_put(vdev);
-
-	if (!xa_empty(&vdev->submitted_jobs_xa))
-		ivpu_start_job_timeout_detection(vdev);
-
 	return 0;
 }
 
@@ -569,12 +505,8 @@ void ivpu_jobs_abort_all(struct ivpu_device *vdev)
 	struct ivpu_job *job;
 	unsigned long id;
 
-	mutex_lock(&vdev->submitted_jobs_lock);
-
 	xa_for_each(&vdev->submitted_jobs_xa, id, job)
 		ivpu_job_signal_and_destroy(vdev, id, DRM_IVPU_JOB_STATUS_ABORTED);
-
-	mutex_unlock(&vdev->submitted_jobs_lock);
 }
 
 static int ivpu_job_submit(struct ivpu_job *job, u8 priority)
@@ -589,7 +521,6 @@ static int ivpu_job_submit(struct ivpu_job *job, u8 priority)
 	if (ret < 0)
 		return ret;
 
-	mutex_lock(&vdev->submitted_jobs_lock);
 	mutex_lock(&file_priv->lock);
 
 	cmdq = ivpu_cmdq_acquire(file_priv, priority);
@@ -597,17 +528,18 @@ static int ivpu_job_submit(struct ivpu_job *job, u8 priority)
 		ivpu_warn_ratelimited(vdev, "Failed to get job queue, ctx %d engine %d prio %d\n",
 				      file_priv->ctx.id, job->engine_idx, priority);
 		ret = -EINVAL;
-		goto err_unlock;
+		goto err_unlock_file_priv;
 	}
 
+	xa_lock(&vdev->submitted_jobs_xa);
 	is_first_job = xa_empty(&vdev->submitted_jobs_xa);
-	ret = xa_alloc_cyclic(&vdev->submitted_jobs_xa, &job->job_id, job, file_priv->job_limit,
-			      &file_priv->job_id_next, GFP_KERNEL);
+	ret = __xa_alloc_cyclic(&vdev->submitted_jobs_xa, &job->job_id, job, file_priv->job_limit,
+				&file_priv->job_id_next, GFP_KERNEL);
 	if (ret < 0) {
 		ivpu_dbg(vdev, JOB, "Too many active jobs in ctx %d\n",
 			 file_priv->ctx.id);
 		ret = -EBUSY;
-		goto err_unlock;
+		goto err_unlock_submitted_jobs_xa;
 	}
 
 	ret = ivpu_cmdq_push_job(cmdq, job);
@@ -625,25 +557,26 @@ static int ivpu_job_submit(struct ivpu_job *job, u8 priority)
 			vdev->busy_start_ts = ktime_get();
 	}
 
+	trace_job("submit", job);
 	ivpu_dbg(vdev, JOB, "Job submitted: id %3u ctx %2d engine %d prio %d addr 0x%llx next %d\n",
 		 job->job_id, file_priv->ctx.id, job->engine_idx, priority,
 		 job->cmd_buf_vpu_addr, cmdq->jobq->header.tail);
 
+	xa_unlock(&vdev->submitted_jobs_xa);
+
 	mutex_unlock(&file_priv->lock);
 
-	if (unlikely(ivpu_test_mode & IVPU_TEST_MODE_NULL_HW)) {
+	if (unlikely(ivpu_test_mode & IVPU_TEST_MODE_NULL_HW))
 		ivpu_job_signal_and_destroy(vdev, job->job_id, VPU_JSM_STATUS_SUCCESS);
-	}
-
-	mutex_unlock(&vdev->submitted_jobs_lock);
 
 	return 0;
 
 err_erase_xa:
-	xa_erase(&vdev->submitted_jobs_xa, job->job_id);
-err_unlock:
+	__xa_erase(&vdev->submitted_jobs_xa, job->job_id);
+err_unlock_submitted_jobs_xa:
+	xa_unlock(&vdev->submitted_jobs_xa);
+err_unlock_file_priv:
 	mutex_unlock(&file_priv->lock);
-	mutex_unlock(&vdev->submitted_jobs_lock);
 	ivpu_rpm_put(vdev);
 	return ret;
 }
@@ -812,6 +745,7 @@ ivpu_job_done_callback(struct ivpu_device *vdev, struct ivpu_ipc_hdr *ipc_hdr,
 		       struct vpu_jsm_msg *jsm_msg)
 {
 	struct vpu_ipc_msg_payload_job_done *payload;
+	int ret;
 
 	if (!jsm_msg) {
 		ivpu_err(vdev, "IPC message has no JSM payload\n");
@@ -824,10 +758,9 @@ ivpu_job_done_callback(struct ivpu_device *vdev, struct ivpu_ipc_hdr *ipc_hdr,
 	}
 
 	payload = (struct vpu_ipc_msg_payload_job_done *)&jsm_msg->payload;
-
-	mutex_lock(&vdev->submitted_jobs_lock);
-	ivpu_job_signal_and_destroy(vdev, payload->job_id, payload->job_status);
-	mutex_unlock(&vdev->submitted_jobs_lock);
+	ret = ivpu_job_signal_and_destroy(vdev, payload->job_id, payload->job_status);
+	if (!ret && !xa_empty(&vdev->submitted_jobs_xa))
+		ivpu_start_job_timeout_detection(vdev);
 }
 
 void ivpu_job_done_consumer_init(struct ivpu_device *vdev)
@@ -839,51 +772,4 @@ void ivpu_job_done_consumer_init(struct ivpu_device *vdev)
 void ivpu_job_done_consumer_fini(struct ivpu_device *vdev)
 {
 	ivpu_ipc_consumer_del(vdev, &vdev->job_done_consumer);
-}
-
-void ivpu_context_abort_thread_handler(struct work_struct *work)
-{
-	struct ivpu_device *vdev = container_of(work, struct ivpu_device, context_abort_work);
-	struct ivpu_file_priv *file_priv;
-	unsigned long ctx_id;
-	struct ivpu_job *job;
-	unsigned long id;
-
-	if (drm_WARN_ON(&vdev->drm, pm_runtime_get_if_active(vdev->drm.dev) <= 0))
-		return;
-
-	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_HW)
-		if (ivpu_jsm_reset_engine(vdev, 0))
-			goto runtime_put;
-
-	mutex_lock(&vdev->context_list_lock);
-	xa_for_each(&vdev->context_xa, ctx_id, file_priv) {
-		if (!file_priv->has_mmu_faults || file_priv->aborted)
-			continue;
-
-		mutex_lock(&file_priv->lock);
-		ivpu_context_abort_locked(file_priv);
-		mutex_unlock(&file_priv->lock);
-	}
-	mutex_unlock(&vdev->context_list_lock);
-
-	if (vdev->fw->sched_mode != VPU_SCHEDULING_MODE_HW)
-		goto runtime_put;
-
-	if (ivpu_jsm_hws_resume_engine(vdev, 0))
-		goto runtime_put;
-	/*
-	 * In hardware scheduling mode NPU already has stopped processing jobs
-	 * and won't send us any further notifications, thus we have to free job related resources
-	 * and notify userspace
-	 */
-	mutex_lock(&vdev->submitted_jobs_lock);
-	xa_for_each(&vdev->submitted_jobs_xa, id, job)
-		if (job->file_priv->aborted)
-			ivpu_job_signal_and_destroy(vdev, job->job_id, DRM_IVPU_JOB_STATUS_ABORTED);
-	mutex_unlock(&vdev->submitted_jobs_lock);
-
-runtime_put:
-	pm_runtime_mark_last_busy(vdev->drm.dev);
-	pm_runtime_put_autosuspend(vdev->drm.dev);
 }

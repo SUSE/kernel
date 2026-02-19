@@ -19,9 +19,8 @@ struct clk;
 struct platform_device;
 struct reset_control;
 
-#define GMP_GRANULARITY (128 * 1024)
-
 #define V3D_MMU_PAGE_SHIFT 12
+#define V3D_PAGE_FACTOR (PAGE_SIZE >> V3D_MMU_PAGE_SHIFT)
 
 #define V3D_MAX_QUEUES (V3D_CPU + 1)
 
@@ -144,6 +143,11 @@ struct v3d_dev {
 	 */
 	struct drm_mm mm;
 	spinlock_t mm_lock;
+
+	/*
+	 * tmpfs instance used for shmem backed objects
+	 */
+	struct vfsmount *gemfs;
 
 	struct work_struct overflow_mem_work;
 
@@ -541,6 +545,11 @@ void v3d_gem_destroy(struct drm_device *dev);
 void v3d_reset(struct v3d_dev *v3d);
 void v3d_invalidate_caches(struct v3d_dev *v3d);
 void v3d_clean_caches(struct v3d_dev *v3d);
+
+/* v3d_gemfs.c */
+extern bool super_pages;
+void v3d_gemfs_init(struct v3d_dev *v3d);
+void v3d_gemfs_fini(struct v3d_dev *v3d);
 
 /* v3d_submit.c */
 void v3d_job_cleanup(struct v3d_job *job);

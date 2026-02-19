@@ -272,7 +272,7 @@ void dp_wait_for_training_aux_rd_interval(
 	struct dc_link *link,
 	uint32_t wait_in_micro_secs)
 {
-	fsleep(wait_in_micro_secs);
+	usleep_range_state(wait_in_micro_secs, wait_in_micro_secs, TASK_UNINTERRUPTIBLE);
 
 	DC_LOG_HW_LINK_TRAINING("%s:\n wait = %d\n",
 		__func__,
@@ -736,8 +736,6 @@ void override_training_settings(
 		lt_settings->pre_emphasis = overrides->pre_emphasis;
 	if (overrides->post_cursor2 != NULL)
 		lt_settings->post_cursor2 = overrides->post_cursor2;
-	if (link->wa_flags.force_dp_ffe_preset && !dp_is_lttpr_present(link))
-		lt_settings->ffe_preset = &link->forced_dp_ffe_preset;
 	if (overrides->ffe_preset != NULL)
 		lt_settings->ffe_preset = overrides->ffe_preset;
 	/* Override HW lane settings with BIOS forced values if present */
@@ -1114,9 +1112,13 @@ enum dc_status dpcd_set_link_settings(
 
 	status = core_link_write_dpcd(link, DP_DOWNSPREAD_CTRL,
 		&downspread.raw, sizeof(downspread));
+	if (status != DC_OK)
+		DC_LOG_ERROR("%s:%d: core_link_write_dpcd (DP_DOWNSPREAD_CTRL) failed\n", __func__, __LINE__);
 
 	status = core_link_write_dpcd(link, DP_LANE_COUNT_SET,
 		&lane_count_set.raw, 1);
+	if (status != DC_OK)
+		DC_LOG_ERROR("%s:%d: core_link_write_dpcd (DP_LANE_COUNT_SET) failed\n", __func__, __LINE__);
 
 	if (link->dpcd_caps.dpcd_rev.raw >= DPCD_REV_13 &&
 			lt_settings->link_settings.use_link_rate_set == true) {
@@ -1132,12 +1134,19 @@ enum dc_status dpcd_set_link_settings(
 					supported_link_rates, sizeof(supported_link_rates));
 		}
 		status = core_link_write_dpcd(link, DP_LINK_BW_SET, &rate, 1);
+		if (status != DC_OK)
+			DC_LOG_ERROR("%s:%d: core_link_write_dpcd (DP_LINK_BW_SET) failed\n", __func__, __LINE__);
+
 		status = core_link_write_dpcd(link, DP_LINK_RATE_SET,
 				&lt_settings->link_settings.link_rate_set, 1);
+		if (status != DC_OK)
+			DC_LOG_ERROR("%s:%d: core_link_write_dpcd (DP_LINK_RATE_SET) failed\n", __func__, __LINE__);
 	} else {
 		rate = get_dpcd_link_rate(&lt_settings->link_settings);
 
 		status = core_link_write_dpcd(link, DP_LINK_BW_SET, &rate, 1);
+		if (status != DC_OK)
+			DC_LOG_ERROR("%s:%d: core_link_write_dpcd (DP_LINK_BW_SET) failed\n", __func__, __LINE__);
 	}
 
 	if (rate) {

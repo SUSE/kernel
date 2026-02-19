@@ -104,7 +104,7 @@ static int amdgpu_mes_event_log_init(struct amdgpu_device *adev)
 		return 0;
 
 	r = amdgpu_bo_create_kernel(adev, adev->mes.event_log_size, PAGE_SIZE,
-				    AMDGPU_GEM_DOMAIN_GTT,
+				    AMDGPU_GEM_DOMAIN_VRAM,
 				    &adev->mes.event_log_gpu_obj,
 				    &adev->mes.event_log_gpu_addr,
 				    &adev->mes.event_log_cpu_addr);
@@ -191,17 +191,6 @@ int amdgpu_mes_init(struct amdgpu_device *adev)
 			(uint64_t *)&adev->wb.wb[adev->mes.query_status_fence_offs[i]];
 	}
 
-	r = amdgpu_device_wb_get(adev, &adev->mes.read_val_offs);
-	if (r) {
-		dev_err(adev->dev,
-			"(%d) read_val_offs alloc failed\n", r);
-		goto error;
-	}
-	adev->mes.read_val_gpu_addr =
-		adev->wb.gpu_addr + (adev->mes.read_val_offs * 4);
-	adev->mes.read_val_ptr =
-		(uint32_t *)&adev->wb.wb[adev->mes.read_val_offs];
-
 	r = amdgpu_mes_doorbell_init(adev);
 	if (r)
 		goto error;
@@ -209,20 +198,6 @@ int amdgpu_mes_init(struct amdgpu_device *adev)
 	r = amdgpu_mes_event_log_init(adev);
 	if (r)
 		goto error_doorbell;
-
-	if (adev->mes.hung_queue_db_array_size) {
-		r = amdgpu_bo_create_kernel(adev,
-					    adev->mes.hung_queue_db_array_size * sizeof(u32),
-					    PAGE_SIZE,
-					    AMDGPU_GEM_DOMAIN_GTT,
-					    &adev->mes.hung_queue_db_array_gpu_obj,
-					    &adev->mes.hung_queue_db_array_gpu_addr,
-					    &adev->mes.hung_queue_db_array_cpu_addr);
-		if (r) {
-			dev_warn(adev->dev, "failed to create MES hung db array buffer (%d)", r);
-			goto error_doorbell;
-		}
-	}
 
 	return 0;
 
@@ -236,8 +211,6 @@ error:
 			amdgpu_device_wb_free(adev,
 				      adev->mes.query_status_fence_offs[i]);
 	}
-	if (adev->mes.read_val_ptr)
-		amdgpu_device_wb_free(adev, adev->mes.read_val_offs);
 
 	idr_destroy(&adev->mes.pasid_idr);
 	idr_destroy(&adev->mes.gang_id_idr);
@@ -251,10 +224,6 @@ void amdgpu_mes_fini(struct amdgpu_device *adev)
 {
 	int i;
 
-	amdgpu_bo_free_kernel(&adev->mes.hung_queue_db_array_gpu_obj,
-			      &adev->mes.hung_queue_db_array_gpu_addr,
-			      &adev->mes.hung_queue_db_array_cpu_addr);
-
 	amdgpu_bo_free_kernel(&adev->mes.event_log_gpu_obj,
 			      &adev->mes.event_log_gpu_addr,
 			      &adev->mes.event_log_cpu_addr);
@@ -266,8 +235,6 @@ void amdgpu_mes_fini(struct amdgpu_device *adev)
 			amdgpu_device_wb_free(adev,
 				      adev->mes.query_status_fence_offs[i]);
 	}
-	if (adev->mes.read_val_ptr)
-		amdgpu_device_wb_free(adev, adev->mes.read_val_offs);
 
 	amdgpu_mes_doorbell_free(adev);
 
@@ -926,7 +893,7 @@ int amdgpu_mes_reset_legacy_queue(struct amdgpu_device *adev,
 	queue_input.me_id = ring->me;
 	queue_input.pipe_id = ring->pipe;
 	queue_input.queue_id = ring->queue;
-	queue_input.mqd_addr = amdgpu_bo_gpu_offset(ring->mqd_obj);
+	queue_input.mqd_addr = ring->mqd_obj ? amdgpu_bo_gpu_offset(ring->mqd_obj) : 0;
 	queue_input.wptr_addr = ring->wptr_gpu_addr;
 	queue_input.vmid = vmid;
 	queue_input.use_mmio = use_mmio;
@@ -940,61 +907,23 @@ int amdgpu_mes_reset_legacy_queue(struct amdgpu_device *adev,
 	return r;
 }
 
-int amdgpu_mes_get_hung_queue_db_array_size(struct amdgpu_device *adev)
-{
-	return adev->mes.hung_queue_db_array_size;
-}
-
-int amdgpu_mes_detect_and_reset_hung_queues(struct amdgpu_device *adev,
-					    int queue_type,
-					    bool detect_only,
-					    unsigned int *hung_db_num,
-					    u32 *hung_db_array)
-
-{
-	struct mes_detect_and_reset_queue_input input;
-	u32 *db_array = adev->mes.hung_queue_db_array_cpu_addr;
-	int r, i;
-
-	if (!hung_db_num || !hung_db_array)
-		return -EINVAL;
-
-	if ((queue_type != AMDGPU_RING_TYPE_GFX) &&
-	    (queue_type != AMDGPU_RING_TYPE_COMPUTE) &&
-	    (queue_type != AMDGPU_RING_TYPE_SDMA))
-		return -EINVAL;
-
-	/* Clear the doorbell array before detection */
-	memset(adev->mes.hung_queue_db_array_cpu_addr, 0,
-		adev->mes.hung_queue_db_array_size * sizeof(u32));
-	input.queue_type = queue_type;
-	input.detect_only = detect_only;
-
-	r = adev->mes.funcs->detect_and_reset_hung_queues(&adev->mes,
-							  &input);
-	if (r) {
-		dev_err(adev->dev, "failed to detect and reset\n");
-	} else {
-		*hung_db_num = 0;
-		for (i = 0; i < adev->mes.hung_queue_db_array_size; i++) {
-			if (db_array[i] != AMDGPU_MES_INVALID_DB_OFFSET) {
-				hung_db_array[i] = db_array[i];
-				*hung_db_num += 1;
-			}
-		}
-	}
-
-	return r;
-}
-
 uint32_t amdgpu_mes_rreg(struct amdgpu_device *adev, uint32_t reg)
 {
 	struct mes_misc_op_input op_input;
 	int r, val = 0;
+	uint32_t addr_offset = 0;
+	uint64_t read_val_gpu_addr;
+	uint32_t *read_val_ptr;
 
+	if (amdgpu_device_wb_get(adev, &addr_offset)) {
+		DRM_ERROR("critical bug! too many mes readers\n");
+		goto error;
+	}
+	read_val_gpu_addr = adev->wb.gpu_addr + (addr_offset * 4);
+	read_val_ptr = (uint32_t *)&adev->wb.wb[addr_offset];
 	op_input.op = MES_MISC_OP_READ_REG;
 	op_input.read_reg.reg_offset = reg;
-	op_input.read_reg.buffer_addr = adev->mes.read_val_gpu_addr;
+	op_input.read_reg.buffer_addr = read_val_gpu_addr;
 
 	if (!adev->mes.funcs->misc_op) {
 		DRM_ERROR("mes rreg is not supported!\n");
@@ -1007,9 +936,11 @@ uint32_t amdgpu_mes_rreg(struct amdgpu_device *adev, uint32_t reg)
 	if (r)
 		DRM_ERROR("failed to read reg (0x%x)\n", reg);
 	else
-		val = *(adev->mes.read_val_ptr);
+		val = *(read_val_ptr);
 
 error:
+	if (addr_offset)
+		amdgpu_device_wb_free(adev, addr_offset);
 	return val;
 }
 
@@ -1672,6 +1603,7 @@ int amdgpu_mes_init_microcode(struct amdgpu_device *adev, int pipe)
 	char ucode_prefix[30];
 	char fw_name[50];
 	bool need_retry = false;
+	u32 *ucode_ptr;
 	int r;
 
 	amdgpu_ucode_ip_version_decode(adev, GC_HWIP, ucode_prefix,
@@ -1709,6 +1641,10 @@ int amdgpu_mes_init_microcode(struct amdgpu_device *adev, int pipe)
 	adev->mes.data_start_addr[pipe] =
 		le32_to_cpu(mes_hdr->mes_data_start_addr_lo) |
 		((uint64_t)(le32_to_cpu(mes_hdr->mes_data_start_addr_hi)) << 32);
+	ucode_ptr = (u32 *)(adev->mes.fw[pipe]->data +
+			  sizeof(union amdgpu_firmware_header));
+	adev->mes.fw_version[pipe] =
+		le32_to_cpu(ucode_ptr[24]) & AMDGPU_MES_VERSION_MASK;
 
 	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
 		int ucode, ucode_data;
@@ -1753,6 +1689,29 @@ bool amdgpu_mes_suspend_resume_all_supported(struct amdgpu_device *adev)
 		is_supported = true;
 
 	return is_supported;
+}
+
+/* Fix me -- node_id is used to identify the correct MES instances in the future */
+int amdgpu_mes_set_enforce_isolation(struct amdgpu_device *adev, uint32_t node_id, bool enable)
+{
+	struct mes_misc_op_input op_input = {0};
+	int r;
+
+	op_input.op = MES_MISC_OP_CHANGE_CONFIG;
+	op_input.change_config.option.limit_single_process = enable ? 1 : 0;
+
+	if (!adev->mes.funcs->misc_op) {
+		dev_err(adev->dev, "mes change config is not supported!\n");
+		r = -EINVAL;
+		goto error;
+	}
+
+	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
+	if (r)
+		dev_err(adev->dev, "failed to change_config.\n");
+
+error:
+	return r;
 }
 
 #if defined(CONFIG_DEBUG_FS)
