@@ -5,9 +5,9 @@
 
 #include "xe_pm.h"
 
+#include <linux/fault-inject.h>
 #include <linux/pm_runtime.h>
 #include <linux/suspend.h>
-#include <linux/dmi.h>
 
 #include <drm/drm_managed.h>
 #include <drm/ttm/ttm_placement.h>
@@ -265,21 +265,7 @@ int xe_pm_init_early(struct xe_device *xe)
 
 	return 0;
 }
-
-static u32 vram_threshold_value(struct xe_device *xe)
-{
-	if (xe->info.platform == XE_BATTLEMAGE) {
-		const char *product_name;
-
-		product_name = dmi_get_system_info(DMI_PRODUCT_NAME);
-		if (product_name && strstr(product_name, "NUC13RNG")) {
-			drm_warn(&xe->drm, "BMG + D3Cold not supported on this platform\n");
-			return 0;
-		}
-	}
-
-	return DEFAULT_VRAM_THRESHOLD;
-}
+ALLOW_ERROR_INJECTION(xe_pm_init_early, ERRNO); /* See xe_pci_probe() */
 
 /**
  * xe_pm_init - Initialize Xe Power Management
@@ -291,7 +277,6 @@ static u32 vram_threshold_value(struct xe_device *xe)
  */
 int xe_pm_init(struct xe_device *xe)
 {
-	u32 vram_threshold;
 	int err;
 
 	/* For now suspend/resume is only allowed with GuC */
@@ -305,8 +290,7 @@ int xe_pm_init(struct xe_device *xe)
 		if (err)
 			return err;
 
-		vram_threshold = vram_threshold_value(xe);
-		err = xe_pm_set_vram_threshold(xe, vram_threshold);
+		err = xe_pm_set_vram_threshold(xe, DEFAULT_VRAM_THRESHOLD);
 		if (err)
 			return err;
 	}
