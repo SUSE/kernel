@@ -42,7 +42,6 @@
 #include "xe_ring_ops_types.h"
 #include "xe_sched_job.h"
 #include "xe_trace.h"
-#include "xe_uc_fw.h"
 #include "xe_vm.h"
 
 static struct xe_guc *
@@ -426,12 +425,11 @@ static const int xe_exec_queue_prio_to_guc[] = {
 static void init_policies(struct xe_guc *guc, struct xe_exec_queue *q)
 {
 	struct exec_queue_policy policy;
-	struct xe_device *xe = guc_to_xe(guc);
 	enum xe_exec_queue_priority prio = q->sched_props.priority;
 	u32 timeslice_us = q->sched_props.timeslice_us;
 	u32 preempt_timeout_us = q->sched_props.preempt_timeout_us;
 
-	xe_assert(xe, exec_queue_registered(q));
+	xe_gt_assert(guc_to_gt(guc), exec_queue_registered(q));
 
 	__guc_exec_queue_policy_start_klv(&policy, q->guc->id);
 	__guc_exec_queue_policy_add_priority(&policy, xe_exec_queue_prio_to_guc[prio]);
@@ -465,12 +463,11 @@ static void __register_mlrc_exec_queue(struct xe_guc *guc,
 				       struct guc_ctxt_registration_info *info)
 {
 #define MAX_MLRC_REG_SIZE      (13 + XE_HW_ENGINE_MAX_INSTANCE * 2)
-	struct xe_device *xe = guc_to_xe(guc);
 	u32 action[MAX_MLRC_REG_SIZE];
 	int len = 0;
 	int i;
 
-	xe_assert(xe, xe_exec_queue_is_parallel(q));
+	xe_gt_assert(guc_to_gt(guc), xe_exec_queue_is_parallel(q));
 
 	action[len++] = XE_GUC_ACTION_REGISTER_CONTEXT_MULTI_LRC;
 	action[len++] = info->flags;
@@ -493,7 +490,7 @@ static void __register_mlrc_exec_queue(struct xe_guc *guc,
 		action[len++] = upper_32_bits(xe_lrc_descriptor(lrc));
 	}
 
-	xe_assert(xe, len <= MAX_MLRC_REG_SIZE);
+	xe_gt_assert(guc_to_gt(guc), len <= MAX_MLRC_REG_SIZE);
 #undef MAX_MLRC_REG_SIZE
 
 	xe_guc_ct_send(&guc->ct, action, len, 0, 0);
@@ -527,7 +524,7 @@ static void register_exec_queue(struct xe_exec_queue *q)
 	struct xe_lrc *lrc = q->lrc[0];
 	struct guc_ctxt_registration_info info;
 
-	xe_assert(xe, !exec_queue_registered(q));
+	xe_gt_assert(guc_to_gt(guc), !exec_queue_registered(q));
 
 	memset(&info, 0, sizeof(info));
 	info.context_idx = q->guc->id;
@@ -635,7 +632,7 @@ static int wq_noop_append(struct xe_exec_queue *q)
 	if (wq_wait_for_space(q, wq_space_until_wrap(q)))
 		return -ENODEV;
 
-	xe_assert(xe, FIELD_FIT(WQ_LEN_MASK, len_dw));
+	xe_gt_assert(guc_to_gt(guc), FIELD_FIT(WQ_LEN_MASK, len_dw));
 
 	parallel_write(xe, map, wq[q->guc->wqi_tail / sizeof(u32)],
 		       FIELD_PREP(WQ_TYPE_MASK, WQ_TYPE_NOOP) |
@@ -675,13 +672,13 @@ static void wq_item_append(struct xe_exec_queue *q)
 		wqi[i++] = lrc->ring.tail / sizeof(u64);
 	}
 
-	xe_assert(xe, i == wqi_size / sizeof(u32));
+	xe_gt_assert(guc_to_gt(guc), i == wqi_size / sizeof(u32));
 
 	iosys_map_incr(&map, offsetof(struct guc_submit_parallel_scratch,
 				      wq[q->guc->wqi_tail / sizeof(u32)]));
 	xe_map_memcpy_to(xe, &map, 0, wqi, wqi_size);
 	q->guc->wqi_tail += wqi_size;
-	xe_assert(xe, q->guc->wqi_tail <= WQ_SIZE);
+	xe_gt_assert(guc_to_gt(guc), q->guc->wqi_tail <= WQ_SIZE);
 
 	xe_device_wmb(xe);
 
@@ -693,7 +690,6 @@ static void wq_item_append(struct xe_exec_queue *q)
 static void submit_exec_queue(struct xe_exec_queue *q)
 {
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 	struct xe_lrc *lrc = q->lrc[0];
 	u32 action[3];
 	u32 g2h_len = 0;
@@ -701,7 +697,7 @@ static void submit_exec_queue(struct xe_exec_queue *q)
 	int len = 0;
 	bool extra_submit = false;
 
-	xe_assert(xe, exec_queue_registered(q));
+	xe_gt_assert(guc_to_gt(guc), exec_queue_registered(q));
 
 	if (xe_exec_queue_is_parallel(q))
 		wq_item_append(q);
@@ -748,12 +744,11 @@ guc_exec_queue_run_job(struct drm_sched_job *drm_job)
 	struct xe_sched_job *job = to_xe_sched_job(drm_job);
 	struct xe_exec_queue *q = job->q;
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 	struct dma_fence *fence = NULL;
 	bool lr = xe_exec_queue_is_lr(q);
 
-	xe_assert(xe, !(exec_queue_destroyed(q) || exec_queue_pending_disable(q)) ||
-		  exec_queue_banned(q) || exec_queue_suspended(q));
+	xe_gt_assert(guc_to_gt(guc), !(exec_queue_destroyed(q) || exec_queue_pending_disable(q)) ||
+		     exec_queue_banned(q) || exec_queue_suspended(q));
 
 	trace_xe_sched_job_run(job);
 
@@ -908,7 +903,7 @@ static void xe_guc_exec_queue_lr_cleanup(struct work_struct *w)
 	struct xe_gpu_scheduler *sched = &ge->sched;
 	bool wedged;
 
-	xe_assert(xe, xe_exec_queue_is_lr(q));
+	xe_gt_assert(guc_to_gt(guc), xe_exec_queue_is_lr(q));
 	trace_xe_exec_queue_lr_cleanup(q);
 
 	wedged = guc_submit_hint_wedged(exec_queue_to_guc(q));
@@ -1322,22 +1317,11 @@ static void __guc_exec_queue_process_msg_cleanup(struct xe_sched_msg *msg)
 {
 	struct xe_exec_queue *q = msg->private_data;
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, !(q->flags & EXEC_QUEUE_FLAG_PERMANENT));
+	xe_gt_assert(guc_to_gt(guc), !(q->flags & EXEC_QUEUE_FLAG_PERMANENT));
 	trace_xe_exec_queue_cleanup_entity(q);
 
-	/*
-	 * Expected state transitions for cleanup:
-	 * - If the exec queue is registered and GuC firmware is running, we must first
-	 *   disable scheduling and deregister the queue to ensure proper teardown and
-	 *   resource release in the GuC, then destroy the exec queue on driver side.
-	 * - If the GuC is already stopped (e.g., during driver unload or GPU reset),
-	 *   we cannot expect a response for the deregister request. In this case,
-	 *   it is safe to directly destroy the exec queue on driver side, as the GuC
-	 *   will not process further requests and all resources must be cleaned up locally.
-	 */
-	if (exec_queue_registered(q) && xe_uc_fw_is_running(&guc->fw))
+	if (exec_queue_registered(q))
 		disable_scheduling_deregister(guc, q);
 	else
 		__guc_exec_queue_fini(guc, q);
@@ -1370,11 +1354,10 @@ static void __suspend_fence_signal(struct xe_exec_queue *q)
 static void suspend_fence_signal(struct xe_exec_queue *q)
 {
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, exec_queue_suspended(q) || exec_queue_killed(q) ||
-		  xe_guc_read_stopped(guc));
-	xe_assert(xe, q->guc->suspend_pending);
+	xe_gt_assert(guc_to_gt(guc), exec_queue_suspended(q) || exec_queue_killed(q) ||
+		     xe_guc_read_stopped(guc));
+	xe_gt_assert(guc_to_gt(guc), q->guc->suspend_pending);
 
 	__suspend_fence_signal(q);
 }
@@ -1470,12 +1453,11 @@ static int guc_exec_queue_init(struct xe_exec_queue *q)
 {
 	struct xe_gpu_scheduler *sched;
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 	struct xe_guc_exec_queue *ge;
 	long timeout;
 	int err, i;
 
-	xe_assert(xe, xe_device_uc_enabled(guc_to_xe(guc)));
+	xe_gt_assert(guc_to_gt(guc), xe_device_uc_enabled(guc_to_xe(guc)));
 
 	ge = kzalloc(sizeof(*ge), GFP_KERNEL);
 	if (!ge)
@@ -1689,9 +1671,8 @@ static void guc_exec_queue_resume(struct xe_exec_queue *q)
 	struct xe_gpu_scheduler *sched = &q->guc->sched;
 	struct xe_sched_msg *msg = q->guc->static_msgs + STATIC_MSG_RESUME;
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, !q->guc->suspend_pending);
+	xe_gt_assert(guc_to_gt(guc), !q->guc->suspend_pending);
 
 	xe_sched_msg_lock(sched);
 	guc_exec_queue_try_add_msg(q, msg, RESUME);
@@ -1803,9 +1784,8 @@ void xe_guc_submit_stop(struct xe_guc *guc)
 {
 	struct xe_exec_queue *q;
 	unsigned long index;
-	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, xe_guc_read_stopped(guc) == 1);
+	xe_gt_assert(guc_to_gt(guc), xe_guc_read_stopped(guc) == 1);
 
 	mutex_lock(&guc->submission_state.lock);
 
@@ -1847,9 +1827,8 @@ int xe_guc_submit_start(struct xe_guc *guc)
 {
 	struct xe_exec_queue *q;
 	unsigned long index;
-	struct xe_device *xe = guc_to_xe(guc);
 
-	xe_assert(xe, xe_guc_read_stopped(guc) == 1);
+	xe_gt_assert(guc_to_gt(guc), xe_guc_read_stopped(guc) == 1);
 
 	mutex_lock(&guc->submission_state.lock);
 	atomic_dec(&guc->submission_state.stopped);
@@ -1884,8 +1863,8 @@ g2h_exec_queue_lookup(struct xe_guc *guc, u32 guc_id)
 		return NULL;
 	}
 
-	xe_assert(xe, guc_id >= q->guc->id);
-	xe_assert(xe, guc_id < (q->guc->id + q->width));
+	xe_gt_assert(guc_to_gt(guc), guc_id >= q->guc->id);
+	xe_gt_assert(guc_to_gt(guc), guc_id < (q->guc->id + q->width));
 
 	return q;
 }
