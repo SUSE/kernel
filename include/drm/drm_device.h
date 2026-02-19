@@ -317,8 +317,6 @@ struct drm_device {
 	 * Root directory for debugfs files.
 	 */
 	struct dentry *debugfs_root;
-
-	void *suse_kabi_padding;
 };
 
 #endif
