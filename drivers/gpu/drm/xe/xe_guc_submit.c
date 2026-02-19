@@ -1955,11 +1955,13 @@ static void handle_sched_done(struct xe_guc *guc, struct xe_exec_queue *q,
 int xe_guc_sched_done_handler(struct xe_guc *guc, u32 *msg, u32 len)
 {
 	struct xe_exec_queue *q;
-	u32 guc_id = msg[0];
-	u32 runnable_state = msg[1];
+	u32 guc_id, runnable_state;
 
 	if (unlikely(len < 2))
 		return -EPROTO;
+
+	guc_id = msg[0];
+	runnable_state = msg[1];
 
 	q = g2h_exec_queue_lookup(guc, guc_id);
 	if (unlikely(!q))
@@ -1994,10 +1996,12 @@ static void handle_deregister_done(struct xe_guc *guc, struct xe_exec_queue *q)
 int xe_guc_deregister_done_handler(struct xe_guc *guc, u32 *msg, u32 len)
 {
 	struct xe_exec_queue *q;
-	u32 guc_id = msg[0];
+	u32 guc_id;
 
 	if (unlikely(len < 1))
 		return -EPROTO;
+
+	guc_id = msg[0];
 
 	q = g2h_exec_queue_lookup(guc, guc_id);
 	if (unlikely(!q))
@@ -2020,10 +2024,12 @@ int xe_guc_exec_queue_reset_handler(struct xe_guc *guc, u32 *msg, u32 len)
 {
 	struct xe_gt *gt = guc_to_gt(guc);
 	struct xe_exec_queue *q;
-	u32 guc_id = msg[0];
+	u32 guc_id;
 
 	if (unlikely(len < 1))
 		return -EPROTO;
+
+	guc_id = msg[0];
 
 	q = g2h_exec_queue_lookup(guc, guc_id);
 	if (unlikely(!q))
@@ -2080,10 +2086,12 @@ int xe_guc_exec_queue_memory_cat_error_handler(struct xe_guc *guc, u32 *msg,
 {
 	struct xe_gt *gt = guc_to_gt(guc);
 	struct xe_exec_queue *q;
-	u32 guc_id = msg[0];
+	u32 guc_id;
 
 	if (unlikely(len < 1))
 		return -EPROTO;
+
+	guc_id = msg[0];
 
 	q = g2h_exec_queue_lookup(guc, guc_id);
 	if (unlikely(!q))
