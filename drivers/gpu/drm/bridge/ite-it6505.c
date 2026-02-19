@@ -3511,7 +3511,7 @@ static void it6505_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id it6505_id[] = {
-	{ "it6505", 0 },
+	{ "it6505" },
 	{ }
 };
 
