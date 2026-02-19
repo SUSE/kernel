@@ -618,6 +618,18 @@ struct panthor_group {
 	 */
 	struct panthor_kernel_bo *syncobjs;
 
+	/** @fdinfo: Per-file total cycle and timestamp values reference. */
+	struct {
+		/** @data: Total sampled values for jobs in queues from this group. */
+		struct panthor_gpu_usage data;
+
+		/**
+		 * @lock: Mutex to govern concurrent access from drm file's fdinfo callback
+		 * and job post-completion processing function
+		 */
+		struct mutex lock;
+	} fdinfo;
+
 	/** @state: Group state. */
 	enum panthor_group_state state;
 
@@ -739,12 +751,6 @@ struct panthor_job_profiling_data {
  * But this can be updated if we need more.
  */
 #define MAX_GROUPS_PER_POOL 128
-
-/*
- * Mark added on an entry of group pool Xarray to identify if the group has
- * been fully initialized and can be accessed elsewhere in the driver code.
- */
-#define GROUP_REGISTERED XA_MARK_1
 
 /**
  * struct panthor_group_pool - Group pool
@@ -893,6 +899,8 @@ static void group_release_work(struct work_struct *work)
 						   struct panthor_group,
 						   release_work);
 	u32 i;
+
+	mutex_destroy(&group->fdinfo.lock);
 
 	for (i = 0; i < group->queue_count; i++)
 		group_free_queue(group, group->queues[i]);
@@ -2864,6 +2872,41 @@ void panthor_sched_post_reset(struct panthor_device *ptdev, bool reset_failed)
 	}
 }
 
+static void update_fdinfo_stats(struct panthor_job *job)
+{
+	struct panthor_group *group = job->group;
+	struct panthor_queue *queue = group->queues[job->queue_idx];
+	struct panthor_gpu_usage *fdinfo = &group->fdinfo.data;
+	struct panthor_job_profiling_data *slots = queue->profiling.slots->kmap;
+	struct panthor_job_profiling_data *data = &slots[job->profiling.slot];
+
+	mutex_lock(&group->fdinfo.lock);
+	if (job->profiling.mask & PANTHOR_DEVICE_PROFILING_CYCLES)
+		fdinfo->cycles += data->cycles.after - data->cycles.before;
+	if (job->profiling.mask & PANTHOR_DEVICE_PROFILING_TIMESTAMP)
+		fdinfo->time += data->time.after - data->time.before;
+	mutex_unlock(&group->fdinfo.lock);
+}
+
+void panthor_fdinfo_gather_group_samples(struct panthor_file *pfile)
+{
+	struct panthor_group_pool *gpool = pfile->groups;
+	struct panthor_group *group;
+	unsigned long i;
+
+	if (IS_ERR_OR_NULL(gpool))
+		return;
+
+	xa_for_each(&gpool->xa, i, group) {
+		mutex_lock(&group->fdinfo.lock);
+		pfile->stats.cycles += group->fdinfo.data.cycles;
+		pfile->stats.time += group->fdinfo.data.time;
+		group->fdinfo.data.cycles = 0;
+		group->fdinfo.data.time = 0;
+		mutex_unlock(&group->fdinfo.lock);
+	}
+}
+
 static void group_sync_upd_work(struct work_struct *work)
 {
 	struct panthor_group *group =
@@ -2896,6 +2939,8 @@ static void group_sync_upd_work(struct work_struct *work)
 	dma_fence_end_signalling(cookie);
 
 	list_for_each_entry_safe(job, job_tmp, &done_jobs, node) {
+		if (job->profiling.mask)
+			update_fdinfo_stats(job);
 		list_del_init(&job->node);
 		panthor_job_put(&job->base);
 	}
@@ -3493,7 +3538,7 @@ int panthor_group_create(struct panthor_file *pfile,
 	}
 	mutex_unlock(&sched->reset.lock);
 
-	xa_set_mark(&gpool->xa, gid, GROUP_REGISTERED);
+	mutex_init(&group->fdinfo.lock);
 
 	return gid;
 
@@ -3508,9 +3553,6 @@ int panthor_group_destroy(struct panthor_file *pfile, u32 group_handle)
 	struct panthor_device *ptdev = pfile->ptdev;
 	struct panthor_scheduler *sched = ptdev->scheduler;
 	struct panthor_group *group;
-
-	if (!xa_get_mark(&gpool->xa, group_handle, GROUP_REGISTERED))
-		return -EINVAL;
 
 	group = xa_erase(&gpool->xa, group_handle);
 	if (!group)
@@ -3537,12 +3579,12 @@ int panthor_group_destroy(struct panthor_file *pfile, u32 group_handle)
 }
 
 static struct panthor_group *group_from_handle(struct panthor_group_pool *pool,
-					       unsigned long group_handle)
+					       u32 group_handle)
 {
 	struct panthor_group *group;
 
 	xa_lock(&pool->xa);
-	group = group_get(xa_find(&pool->xa, &group_handle, group_handle, GROUP_REGISTERED));
+	group = group_get(xa_load(&pool->xa, group_handle));
 	xa_unlock(&pool->xa);
 
 	return group;
