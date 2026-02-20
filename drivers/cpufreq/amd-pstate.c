@@ -809,23 +809,23 @@ static int amd_pstate_init_freq(struct amd_cpudata *cpudata)
 	if (ret)
 		return ret;
 
-	min_freq = cppc_perf.lowest_freq * 1000;
+	min_freq = cppc_perf.lowest_freq;
 	nominal_freq = cppc_perf.nominal_freq;
 	nominal_perf = READ_ONCE(cpudata->nominal_perf);
 
 	highest_perf = READ_ONCE(cpudata->highest_perf);
 	boost_ratio = div_u64(highest_perf << SCHED_CAPACITY_SHIFT, nominal_perf);
-	max_freq = (nominal_freq * boost_ratio >> SCHED_CAPACITY_SHIFT) * 1000;
+	max_freq = (nominal_freq * boost_ratio >> SCHED_CAPACITY_SHIFT);
 
 	lowest_nonlinear_perf = READ_ONCE(cpudata->lowest_nonlinear_perf);
 	lowest_nonlinear_ratio = div_u64(lowest_nonlinear_perf << SCHED_CAPACITY_SHIFT,
 					 nominal_perf);
-	lowest_nonlinear_freq = (nominal_freq * lowest_nonlinear_ratio >> SCHED_CAPACITY_SHIFT) * 1000;
+	lowest_nonlinear_freq = (nominal_freq * lowest_nonlinear_ratio >> SCHED_CAPACITY_SHIFT);
 
-	WRITE_ONCE(cpudata->min_freq, min_freq);
-	WRITE_ONCE(cpudata->lowest_nonlinear_freq, lowest_nonlinear_freq);
-	WRITE_ONCE(cpudata->nominal_freq, nominal_freq);
-	WRITE_ONCE(cpudata->max_freq, max_freq);
+	WRITE_ONCE(cpudata->min_freq, min_freq * 1000);
+	WRITE_ONCE(cpudata->lowest_nonlinear_freq, lowest_nonlinear_freq * 1000);
+	WRITE_ONCE(cpudata->nominal_freq, nominal_freq * 1000);
+	WRITE_ONCE(cpudata->max_freq, max_freq * 1000);
 
 	return 0;
 }
