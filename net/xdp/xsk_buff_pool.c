@@ -230,6 +230,7 @@ int xp_assign_dev(struct xsk_buff_pool *pool,
 		goto err_unreg_xsk;
 	}
 	pool->umem->zc = true;
+	pool->xdp_zc_max_segs = netdev->xdp_zc_max_segs;
 	return 0;
 
 err_unreg_xsk:
@@ -416,8 +417,10 @@ static int xp_init_dma_info(struct xsk_buff_pool *pool, struct xsk_dma_map *dma_
 
 		for (i = 0; i < pool->heads_cnt; i++) {
 			struct xdp_buff_xsk *xskb = &pool->heads[i];
+			u64 orig_addr;
 
-			xp_init_xskb_dma(xskb, pool, dma_map->dma_pages, xskb->orig_addr);
+			orig_addr = xskb->xdp.data_hard_start - pool->addrs - pool->headroom;
+			xp_init_xskb_dma(xskb, pool, dma_map->dma_pages, orig_addr);
 		}
 	}
 
@@ -500,6 +503,22 @@ static bool xp_check_aligned(struct xsk_buff_pool *pool, u64 *addr)
 	return *addr < pool->addrs_cnt;
 }
 
+static struct xdp_buff_xsk *xp_get_xskb(struct xsk_buff_pool *pool, u64 addr)
+{
+	struct xdp_buff_xsk *xskb;
+
+	if (pool->unaligned) {
+		xskb = pool->free_heads[--pool->free_heads_cnt];
+		xp_init_xskb_addr(xskb, pool, addr);
+		if (pool->dma_pages)
+			xp_init_xskb_dma(xskb, pool, pool->dma_pages, addr);
+	} else {
+		xskb = &pool->heads[xp_aligned_extract_idx(pool, addr)];
+	}
+
+	return xskb;
+}
+
 static struct xdp_buff_xsk *__xp_alloc(struct xsk_buff_pool *pool)
 {
 	struct xdp_buff_xsk *xskb;
@@ -525,14 +544,7 @@ static struct xdp_buff_xsk *__xp_alloc(struct xsk_buff_pool *pool)
 		break;
 	}
 
-	if (pool->unaligned) {
-		xskb = pool->free_heads[--pool->free_heads_cnt];
-		xp_init_xskb_addr(xskb, pool, addr);
-		if (pool->dma_pages)
-			xp_init_xskb_dma(xskb, pool, pool->dma_pages, addr);
-	} else {
-		xskb = &pool->heads[xp_aligned_extract_idx(pool, addr)];
-	}
+	xskb = xp_get_xskb(pool, addr);
 
 	xskq_cons_release(pool->fq);
 	return xskb;
@@ -590,14 +602,7 @@ static u32 xp_alloc_new_from_fq(struct xsk_buff_pool *pool, struct xdp_buff **xd
 			continue;
 		}
 
-		if (pool->unaligned) {
-			xskb = pool->free_heads[--pool->free_heads_cnt];
-			xp_init_xskb_addr(xskb, pool, addr);
-			if (pool->dma_pages)
-				xp_init_xskb_dma(xskb, pool, pool->dma_pages, addr);
-		} else {
-			xskb = &pool->heads[xp_aligned_extract_idx(pool, addr)];
-		}
+		xskb = xp_get_xskb(pool, addr);
 
 		*xdp = &xskb->xdp;
 		xdp++;

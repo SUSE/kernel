@@ -685,7 +685,14 @@ static void hid_close_report(struct hid_device *device)
 		INIT_LIST_HEAD(&report_enum->report_list);
 	}
 
-	kfree(device->rdesc);
+	/*
+	 * If the HID driver had a rdesc_fixup() callback, dev->rdesc
+	 * will be allocated by hid-core and needs to be freed.
+	 * Otherwise, it is either equal to dev_rdesc or bpf_rdesc, in
+	 * which cases it'll be freed later on device removal or destroy.
+	 */
+	if (device->rdesc != device->dev_rdesc && device->rdesc != device->bpf_rdesc)
+		kfree(device->rdesc);
 	device->rdesc = NULL;
 	device->rsize = 0;
 
@@ -698,6 +705,14 @@ static void hid_close_report(struct hid_device *device)
 	device->status &= ~HID_STAT_PARSED;
 }
 
+static inline void hid_free_bpf_rdesc(struct hid_device *hdev)
+{
+	/* bpf_rdesc is either equal to dev_rdesc or allocated by call_hid_bpf_rdesc_fixup() */
+	if (hdev->bpf_rdesc != hdev->dev_rdesc)
+		kfree(hdev->bpf_rdesc);
+	hdev->bpf_rdesc = NULL;
+}
+
 /*
  * Free a device structure, all reports, and all fields.
  */
@@ -707,6 +722,7 @@ void hiddev_free(struct kref *ref)
 	struct hid_device *hid = container_of(ref, struct hid_device, ref);
 
 	hid_close_report(hid);
+	hid_free_bpf_rdesc(hid);
 	kfree(hid->dev_rdesc);
 	kfree(hid);
 }
@@ -1207,7 +1223,6 @@ int hid_open_report(struct hid_device *device)
 	struct hid_item item;
 	unsigned int size;
 	const __u8 *start;
-	__u8 *buf;
 	const __u8 *end;
 	const __u8 *next;
 	int ret;
@@ -1223,25 +1238,34 @@ int hid_open_report(struct hid_device *device)
 	if (WARN_ON(device->status & HID_STAT_PARSED))
 		return -EBUSY;
 
-	start = device->dev_rdesc;
+	start = device->bpf_rdesc;
 	if (WARN_ON(!start))
 		return -ENODEV;
-	size = device->dev_rsize;
+	size = device->bpf_rsize;
 
-	/* call_hid_bpf_rdesc_fixup() ensures we work on a copy of rdesc */
-	buf = call_hid_bpf_rdesc_fixup(device, start, &size);
-	if (buf == NULL)
-		return -ENOMEM;
+	if (device->driver->report_fixup) {
+		/*
+		 * device->driver->report_fixup() needs to work
+		 * on a copy of our report descriptor so it can
+		 * change it.
+		 */
+		__u8 *buf = kmemdup(start, size, GFP_KERNEL);
 
-	if (device->driver->report_fixup)
+		if (buf == NULL)
+			return -ENOMEM;
+
 		start = device->driver->report_fixup(device, buf, &size);
-	else
-		start = buf;
 
-	start = kmemdup(start, size, GFP_KERNEL);
-	kfree(buf);
-	if (start == NULL)
-		return -ENOMEM;
+		/*
+		 * The second kmemdup is required in case report_fixup() returns
+		 * a static read-only memory, but we have no idea if that memory
+		 * needs to be cleaned up or not at the end.
+		 */
+		start = kmemdup(start, size, GFP_KERNEL);
+		kfree(buf);
+		if (start == NULL)
+			return -ENOMEM;
+	}
 
 	device->rdesc = start;
 	device->rsize = size;
@@ -2697,6 +2721,18 @@ static int __hid_device_probe(struct hid_device *hdev, struct hid_driver *hdrv)
 	const struct hid_device_id *id;
 	int ret;
 
+	if (!hdev->bpf_rsize) {
+		/* in case a bpf program gets detached, we need to free the old one */
+		hid_free_bpf_rdesc(hdev);
+
+		/* keep this around so we know we called it once */
+		hdev->bpf_rsize = hdev->dev_rsize;
+
+		/* call_hid_bpf_rdesc_fixup will always return a valid pointer */
+		hdev->bpf_rdesc = call_hid_bpf_rdesc_fixup(hdev, hdev->dev_rdesc,
+							   &hdev->bpf_rsize);
+	}
+
 	if (!hid_check_device_match(hdev, hdrv, &id))
 		return -ENODEV;
 
@@ -2953,9 +2989,11 @@ static void hid_remove_device(struct hid_device *hdev)
 		hid_debug_unregister(hdev);
 		hdev->status &= ~HID_STAT_ADDED;
 	}
+	hid_free_bpf_rdesc(hdev);
 	kfree(hdev->dev_rdesc);
 	hdev->dev_rdesc = NULL;
 	hdev->dev_rsize = 0;
+	hdev->bpf_rsize = 0;
 }
 
 /**
@@ -3056,7 +3094,7 @@ int hid_check_keys_pressed(struct hid_device *hid)
 EXPORT_SYMBOL_GPL(hid_check_keys_pressed);
 
 #ifdef CONFIG_HID_BPF
-static struct hid_ops __hid_ops = {
+static const struct hid_ops __hid_ops = {
 	.hid_get_report = hid_get_report,
 	.hid_hw_raw_request = __hid_hw_raw_request,
 	.hid_hw_output_report = __hid_hw_output_report,
