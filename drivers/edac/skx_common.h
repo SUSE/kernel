@@ -141,7 +141,7 @@ struct skx_dev {
 	u64 mmio_base_h_south;
 	int pkg;
 
-
+	int num_imc;
 	/*
 	 * Some server BIOS may hide certain memory controllers, and the
 	 * EDAC driver skips those hidden memory controllers. However, the

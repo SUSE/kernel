@@ -323,10 +323,10 @@ static int get_width(u32 mtr)
  */
 int skx_get_all_bus_mappings(struct res_config *cfg, struct list_head **list)
 {
+	int ndev = 0, imc_num = cfg->ddr_imc_num + cfg->hbm_imc_num;
 	struct pci_dev *pdev, *prev;
 	struct skx_dev *d;
 	u32 reg;
-	int ndev = 0;
 
 	prev = NULL;
 	for (;;) {
@@ -357,8 +357,10 @@ int skx_get_all_bus_mappings(struct res_config *cfg, struct list_head **list)
 			d->seg = GET_BITFIELD(reg, 16, 23);
 		}
 
-		edac_dbg(2, "busses: 0x%x, 0x%x, 0x%x, 0x%x\n",
-			 d->bus[0], d->bus[1], d->bus[2], d->bus[3]);
+		d->num_imc = imc_num;
+
+		edac_dbg(2, "busses: 0x%x, 0x%x, 0x%x, 0x%x, imcs %d\n",
+			 d->bus[0], d->bus[1], d->bus[2], d->bus[3], imc_num);
 		list_add_tail(&d->list, &dev_edac_list);
 		prev = pdev;
 
@@ -557,10 +559,10 @@ int skx_register_mci(struct skx_imc *imc, struct device *dev,
 
 	/* Allocate a new MC control structure */
 	layers[0].type = EDAC_MC_LAYER_CHANNEL;
-	layers[0].size = NUM_CHANNELS;
+	layers[0].size = imc->num_channels;
 	layers[0].is_virt_csrow = false;
 	layers[1].type = EDAC_MC_LAYER_SLOT;
-	layers[1].size = NUM_DIMMS;
+	layers[1].size = imc->num_dimms;
 	layers[1].is_virt_csrow = true;
 	mci = edac_mc_alloc(imc->mc, ARRAY_SIZE(layers), layers,
 			    sizeof(struct skx_pvt));
@@ -800,7 +802,7 @@ void skx_remove(void)
 
 	list_for_each_entry_safe(d, tmp, &dev_edac_list, list) {
 		list_del(&d->list);
-		for (i = 0; i < NUM_IMC; i++) {
+		for (i = 0; i < d->num_imc; i++) {
 			if (d->imc[i].mci)
 				skx_unregister_mci(&d->imc[i]);
 
@@ -808,12 +810,12 @@ void skx_remove(void)
 				pci_dev_put(d->imc[i].mdev);
 
 			if (d->imc[i].mbase)
-				iounmap(d->imc[i].mbase);
 
 			if (d->imc[i].dev)
 				put_device(d->imc[i].dev);
+				iounmap(d->imc[i].mbase);
 
-			for (j = 0; j < NUM_CHANNELS; j++) {
+			for (j = 0; j < d->imc[i].num_channels; j++) {
 				if (d->imc[i].chan[j].cdev)
 					pci_dev_put(d->imc[i].chan[j].cdev);
 			}
