@@ -153,7 +153,7 @@ struct skx_dev {
 		bool hbm_mc;
 		u8 mc;	/* system wide mc# */
 		u8 lmc;	/* socket relative mc# */
-		u8 src_id,
+		u8 src_id;
 
 		/*
 		 * Some server BIOS may hide certain memory controllers, and the
@@ -165,11 +165,7 @@ struct skx_dev {
 		 * error handling process.
 		 */
 		u8 mc_mapping;
-#ifndef __GENKSYMS__
-		unused1;
-#else
-		node_id;
-#endif
+
 		struct skx_channel {
 			struct pci_dev	*cdev;
 			struct pci_dev	*edev;

@@ -20,9 +20,7 @@
 #include <linux/overflow.h>
 #include <acpi/nfit.h>
 #include <asm/mce.h>
-#ifndef __GENKSYMS__
 #include <asm/uv/uv.h>
-#endif
 #include "edac_module.h"
 #include "skx_common.h"
 
