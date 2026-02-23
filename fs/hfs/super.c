@@ -34,6 +34,7 @@ MODULE_LICENSE("GPL");
 
 static int hfs_sync_fs(struct super_block *sb, int wait)
 {
+	is_hfs_cnid_counts_valid(sb);
 	hfs_mdb_commit(sb);
 	return 0;
 }
@@ -64,6 +65,8 @@ static void flush_mdb(struct work_struct *work)
 	spin_lock(&sbi->work_lock);
 	sbi->work_queued = 0;
 	spin_unlock(&sbi->work_lock);
+
+	is_hfs_cnid_counts_valid(sb);
 
 	hfs_mdb_commit(sb);
 }
@@ -408,7 +411,7 @@ static int hfs_init_fs_context(struct fs_context *fc)
 {
 	struct hfs_sb_info *hsb;
 
-	hsb = kzalloc(sizeof(struct hfs_sb_info), GFP_KERNEL);
+	hsb = kzalloc_obj(struct hfs_sb_info);
 	if (!hsb)
 		return -ENOMEM;
 

@@ -68,8 +68,8 @@ static int pci_secondary_epc_epf_link(struct config_item *epf_item,
 	return 0;
 }
 
-static void pci_secondary_epc_epf_unlink(struct config_item *epc_item,
-					 struct config_item *epf_item)
+static void pci_secondary_epc_epf_unlink(struct config_item *epf_item,
+					 struct config_item *epc_item)
 {
 	struct pci_epf_group *epf_group = to_pci_epf_group(epf_item->ci_parent);
 	struct pci_epc_group *epc_group = to_pci_epc_group(epc_item);
@@ -132,8 +132,8 @@ static int pci_primary_epc_epf_link(struct config_item *epf_item,
 	return 0;
 }
 
-static void pci_primary_epc_epf_unlink(struct config_item *epc_item,
-				       struct config_item *epf_item)
+static void pci_primary_epc_epf_unlink(struct config_item *epf_item,
+				       struct config_item *epc_item)
 {
 	struct pci_epf_group *epf_group = to_pci_epf_group(epf_item->ci_parent);
 	struct pci_epc_group *epc_group = to_pci_epc_group(epc_item);
@@ -274,7 +274,7 @@ struct config_group *pci_ep_cfs_add_epc_group(const char *name)
 	struct config_group *group;
 	struct pci_epc_group *epc_group;
 
-	epc_group = kzalloc(sizeof(*epc_group), GFP_KERNEL);
+	epc_group = kzalloc_obj(*epc_group);
 	if (!epc_group) {
 		ret = -ENOMEM;
 		goto err;
@@ -599,7 +599,7 @@ static struct config_group *pci_epf_make(struct config_group *group,
 	char *epf_name;
 	int index, err;
 
-	epf_group = kzalloc(sizeof(*epf_group), GFP_KERNEL);
+	epf_group = kzalloc_obj(*epf_group);
 	if (!epf_group)
 		return ERR_PTR(-ENOMEM);
 

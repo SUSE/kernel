@@ -101,8 +101,23 @@ int smbd_send_credit_target = 255;
 /* The maximum single message size can be sent to remote peer */
 int smbd_max_send_size = 1364;
 
-/*  The maximum fragmented upper-layer payload receive size supported */
-int smbd_max_fragmented_recv_size = 1024 * 1024;
+/*
+ * The maximum fragmented upper-layer payload receive size supported
+ *
+ * Assume max_payload_per_credit is
+ * smbd_max_receive_size - 24 = 1340
+ *
+ * The maximum number would be
+ * smbd_receive_credit_max * max_payload_per_credit
+ *
+ *                       1340 * 255 = 341700 (0x536C4)
+ *
+ * The minimum value from the spec is 131072 (0x20000)
+ *
+ * For now we use the logic we used in ksmbd before:
+ *                 (1364 * 255) / 2 = 173910 (0x2A756)
+ */
+int smbd_max_fragmented_recv_size = (1364 * 255) / 2;
 
 /*  The maximum single-message size which can be received */
 int smbd_max_receive_size = 1364;
@@ -907,6 +922,7 @@ static struct rdma_cm_id *smbd_create_id(
 {
 	struct smbdirect_socket_parameters *sp = &sc->parameters;
 	struct rdma_cm_id *id;
+	u8 node_type = RDMA_NODE_UNSPECIFIED;
 	int rc;
 	__be16 *sport;
 
@@ -916,6 +932,31 @@ static struct rdma_cm_id *smbd_create_id(
 		rc = PTR_ERR(id);
 		log_rdma_event(ERR, "rdma_create_id() failed %i\n", rc);
 		return id;
+	}
+
+	switch (port) {
+	case SMBD_PORT:
+		/*
+		 * only allow iWarp devices
+		 * for port 5445.
+		 */
+		node_type = RDMA_NODE_RNIC;
+		break;
+	case SMB_PORT:
+		/*
+		 * only allow InfiniBand, RoCEv1 or RoCEv2
+		 * devices for port 445.
+		 *
+		 * (Basically don't allow iWarp devices)
+		 */
+		node_type = RDMA_NODE_IB_CA;
+		break;
+	}
+	rc = rdma_restrict_node_type(id, node_type);
+	if (rc) {
+		log_rdma_event(ERR, "rdma_restrict_node_type(%u) failed %i\n",
+			       node_type, rc);
+		goto out;
 	}
 
 	if (dstaddr->sa_family == AF_INET6)
@@ -2057,7 +2098,7 @@ static struct smbd_connection *_smbd_get_connection(
 	char wq_name[80];
 	struct workqueue_struct *workqueue;
 
-	info = kzalloc(sizeof(struct smbd_connection), GFP_KERNEL);
+	info = kzalloc_obj(struct smbd_connection);
 	if (!info)
 		return NULL;
 	sc = &info->socket;
@@ -2745,7 +2786,7 @@ static int allocate_mr_list(struct smbdirect_socket *sc)
 
 	/* Allocate more MRs (2x) than hardware responder_resources */
 	for (i = 0; i < sp->responder_resources * 2; i++) {
-		mr = kzalloc(sizeof(*mr), GFP_KERNEL);
+		mr = kzalloc_obj(*mr);
 		if (!mr) {
 			ret = -ENOMEM;
 			goto kzalloc_mr_failed;
@@ -2764,9 +2805,8 @@ static int allocate_mr_list(struct smbdirect_socket *sc)
 			goto ib_alloc_mr_failed;
 		}
 
-		mr->sgt.sgl = kcalloc(sp->max_frmr_depth,
-				      sizeof(struct scatterlist),
-				      GFP_KERNEL);
+		mr->sgt.sgl = kzalloc_objs(struct scatterlist,
+					   sp->max_frmr_depth);
 		if (!mr->sgt.sgl) {
 			ret = -ENOMEM;
 			log_rdma_mr(ERR, "failed to allocate sgl\n");
