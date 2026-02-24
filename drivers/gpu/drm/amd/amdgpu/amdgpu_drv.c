@@ -3010,9 +3010,6 @@ static int __init amdgpu_init(void)
 {
 	int r;
 
-	if (drm_firmware_drivers_only())
-		return -EINVAL;
-
 	r = amdgpu_sync_init();
 	if (r)
 		goto error_sync;
