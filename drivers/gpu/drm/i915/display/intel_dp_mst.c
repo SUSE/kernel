@@ -380,7 +380,7 @@ int intel_dp_mtp_tu_compute_config(struct intel_dp *intel_dp,
 		}
 
 		/* Allow using zero step to indicate one try */
-		if (!step)
+		if (!bpp_step_x16)
 			break;
 	}
 
