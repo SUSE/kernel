@@ -753,10 +753,6 @@ int xe_device_probe(struct xe_device *xe)
 		return err;
 
 	xe->info.mem_region_mask = 1;
-	err = xe_display_init_nommio(xe);
-	if (err)
-		return err;
-
 	err = xe_set_dma_info(xe);
 	if (err)
 		return err;
@@ -811,10 +807,6 @@ int xe_device_probe(struct xe_device *xe)
 	if (err)
 		return err;
 
-	err = xe_display_init_noirq(xe);
-	if (err)
-		return err;
-
 	err = probe_has_flat_ccs(xe);
 	if (err)
 		goto err;
@@ -840,7 +832,7 @@ int xe_device_probe(struct xe_device *xe)
 	 * This is the reason the first allocation needs to be done
 	 * inside display.
 	 */
-	err = xe_display_init_noaccel(xe);
+	err = xe_display_init_early(xe);
 	if (err)
 		goto err;
 
