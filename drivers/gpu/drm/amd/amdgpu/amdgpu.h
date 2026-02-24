@@ -109,6 +109,7 @@
 #include "amdgpu_mca.h"
 #include "amdgpu_aca.h"
 #include "amdgpu_ras.h"
+#include "amdgpu_cper.h"
 #include "amdgpu_xcp.h"
 #include "amdgpu_seq64.h"
 #include "amdgpu_reg_state.h"
@@ -1089,6 +1090,9 @@ struct amdgpu_device {
 
 	/* ACA */
 	struct amdgpu_aca		aca;
+
+	/* CPER */
+	struct amdgpu_cper		cper;
 
 	struct amdgpu_ip_block          ip_blocks[AMDGPU_MAX_IP_NUM];
 	uint32_t		        harvest_ip_mask;
