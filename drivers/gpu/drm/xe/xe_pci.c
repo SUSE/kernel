@@ -764,11 +764,7 @@ static int xe_info_init(struct xe_device *xe,
 
 static void xe_pci_remove(struct pci_dev *pdev)
 {
-	struct xe_device *xe;
-
-	xe = pdev_to_xe_device(pdev);
-	if (!xe) /* driver load aborted, nothing to cleanup */
-		return;
+	struct xe_device *xe = pdev_to_xe_device(pdev);
 
 	if (IS_SRIOV_PF(xe))
 		xe_pci_sriov_configure(pdev, 0);
@@ -778,7 +774,6 @@ static void xe_pci_remove(struct pci_dev *pdev)
 
 	xe_device_remove(xe);
 	xe_pm_runtime_fini(xe);
-	pci_set_drvdata(pdev, NULL);
 }
 
 /*
