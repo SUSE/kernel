@@ -21,10 +21,10 @@ struct cached_dirent {
 struct cached_dirents {
 	bool is_valid:1;
 	bool is_failed:1;
-	struct dir_context *ctx; /*
-				  * Only used to make sure we only take entries
-				  * from a single context. Never dereferenced.
-				  */
+	struct file *file; /*
+			    * Used to associate the cache with a single
+			    * open file instance.
+			    */
 	struct mutex de_mutex;
 	int pos;		 /* Expected ctx->pos */
 	struct list_head entries;
@@ -34,14 +34,14 @@ struct cached_fid {
 	struct list_head entry;
 	struct cached_fids *cfids;
 	const char *path;
-	bool has_lease:1;
-	bool is_open:1;
-	bool on_list:1;
-	bool file_all_info_is_valid:1;
+	bool has_lease;
+	bool is_open;
+	bool on_list;
+	bool file_all_info_is_valid;
 	unsigned long time; /* jiffies of when lease was taken */
+	unsigned long last_access_time; /* jiffies of when last accessed */
 	struct kref refcount;
 	struct cifs_fid fid;
-	spinlock_t fid_lock;
 	struct cifs_tcon *tcon;
 	struct dentry *dentry;
 	struct work_struct put_work;
@@ -64,6 +64,12 @@ struct cached_fids {
 	struct delayed_work laundromat_work;
 };
 
+static inline bool
+is_valid_cached_dir(struct cached_fid *cfid)
+{
+	return cfid->time && cfid->has_lease;
+}
+
 extern struct cached_fids *init_cached_dirs(void);
 extern void free_cached_dirs(struct cached_fids *cfids);
 extern int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
@@ -80,6 +86,6 @@ extern void drop_cached_dir_by_name(const unsigned int xid,
 				    struct cifs_sb_info *cifs_sb);
 extern void close_all_cached_dirs(struct cifs_sb_info *cifs_sb);
 extern void invalidate_all_cached_dirs(struct cifs_tcon *tcon);
-extern int cached_dir_lease_break(struct cifs_tcon *tcon, __u8 lease_key[16]);
+extern bool cached_dir_lease_break(struct cifs_tcon *tcon, __u8 lease_key[16]);
 
 #endif			/* _CACHED_DIR_H */

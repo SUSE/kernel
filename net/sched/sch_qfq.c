@@ -534,8 +534,10 @@ set_change_agg:
 	return 0;
 
 destroy_class:
-	qdisc_put(cl->qdisc);
-	kfree(cl);
+	if (!existing) {
+		qdisc_put(cl->qdisc);
+		kfree(cl);
+	}
 	return err;
 }
 
@@ -1484,7 +1486,7 @@ static void qfq_reset_qdisc(struct Qdisc *sch)
 
 	for (i = 0; i < q->clhash.hashsize; i++) {
 		hlist_for_each_entry(cl, &q->clhash.hash[i], common.hnode) {
-			if (cl->qdisc->q.qlen > 0)
+			if (cl_is_active(cl))
 				qfq_deactivate_class(q, cl);
 
 			qdisc_reset(cl->qdisc);
