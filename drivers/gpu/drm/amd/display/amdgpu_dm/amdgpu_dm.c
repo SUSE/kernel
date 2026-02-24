@@ -4807,6 +4807,9 @@ static u32 convert_brightness_from_user(const struct amdgpu_dm_backlight_caps *c
 	for (int i = 0; i < caps->data_points; i++) {
 		u8 signal, lum;
 
+		if (amdgpu_dc_debug_mask & DC_DISABLE_CUSTOM_BRIGHTNESS_CURVE)
+			break;
+
 		signal = caps->luminance_data[i].input_signal;
 		lum = caps->luminance_data[i].luminance;
 
@@ -4972,8 +4975,6 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 	struct amdgpu_dm_backlight_caps caps = { 0 };
 	char bl_name[16];
 	int min, max;
-	int real_brightness;
-	int init_brightness;
 
 	if (aconnector->bl_idx == -1)
 		return;
@@ -4998,8 +4999,8 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 	} else
 		props.brightness = AMDGPU_MAX_BL_LEVEL;
 
-	init_brightness = props.brightness;
-
+	if (caps.data_points && !(amdgpu_dc_debug_mask & DC_DISABLE_CUSTOM_BRIGHTNESS_CURVE))
+		drm_info(drm, "Using custom brightness curve\n");
 	props.max_brightness = AMDGPU_MAX_BL_LEVEL;
 	props.type = BACKLIGHT_RAW;
 
@@ -5014,20 +5015,8 @@ amdgpu_dm_register_backlight_device(struct amdgpu_dm_connector *aconnector)
 	if (IS_ERR(dm->backlight_dev[aconnector->bl_idx])) {
 		DRM_ERROR("DM: Backlight registration failed!\n");
 		dm->backlight_dev[aconnector->bl_idx] = NULL;
-	} else {
-		/*
-		 * dm->brightness[x] can be inconsistent just after startup until
-		 * ops.get_brightness is called.
-		 */
-		real_brightness =
-			amdgpu_dm_backlight_ops.get_brightness(dm->backlight_dev[aconnector->bl_idx]);
-
-		if (real_brightness != init_brightness) {
-			dm->actual_brightness[aconnector->bl_idx] = real_brightness;
-			dm->brightness[aconnector->bl_idx] = real_brightness;
-		}
+	} else
 		DRM_DEBUG_DRIVER("DM: Registered Backlight device: %s\n", bl_name);
-	}
 }
 
 static int initialize_plane(struct amdgpu_display_manager *dm,
