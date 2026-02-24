@@ -69,8 +69,8 @@ static int find_available_queue_slot(struct process_queue_manager *pqm,
 	pr_debug("The new slot id %lu\n", found);
 
 	if (found >= KFD_MAX_NUM_OF_QUEUES_PER_PROCESS) {
-		pr_info("Cannot open more queues for process with pasid 0x%x\n",
-				pqm->process->pasid);
+		pr_info("Cannot open more queues for process with pid %d\n",
+			pqm->process->lead_thread->pid);
 		return -ENOMEM;
 	}
 
@@ -363,25 +363,9 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 	if (retval != 0)
 		return retval;
 
-	/* Register process if this is the first queue */
 	if (list_empty(&pdd->qpd.queues_list) &&
 	    list_empty(&pdd->qpd.priv_queue_list))
 		dev->dqm->ops.register_process(dev->dqm, &pdd->qpd);
-
-	/* Allocate proc_ctx_bo only if MES is enabled and this is the first queue */
-	if (!pdd->proc_ctx_cpu_ptr && dev->kfd->shared_resources.enable_mes) {
-		retval = amdgpu_amdkfd_alloc_gtt_mem(dev->adev,
-						     AMDGPU_MES_PROC_CTX_SIZE,
-						     &pdd->proc_ctx_bo,
-						     &pdd->proc_ctx_gpu_addr,
-						     &pdd->proc_ctx_cpu_ptr,
-						     false);
-		if (retval) {
-			dev_err(dev->adev->dev, "failed to allocate process context bo\n");
-			return retval;
-		}
-		memset(pdd->proc_ctx_cpu_ptr, 0, AMDGPU_MES_PROC_CTX_SIZE);
-	}
 
 	pqn = kzalloc(sizeof(*pqn), GFP_KERNEL);
 	if (!pqn) {
@@ -451,8 +435,8 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 	}
 
 	if (retval != 0) {
-		pr_err("Pasid 0x%x DQM create queue type %d failed. ret %d\n",
-			pqm->process->pasid, type, retval);
+		pr_err("process pid %d DQM create queue type %d failed. ret %d\n",
+			pqm->process->lead_thread->pid, type, retval);
 		goto err_create_queue;
 	}
 
@@ -546,9 +530,9 @@ int pqm_destroy_queue(struct process_queue_manager *pqm, unsigned int qid)
 		retval = dqm->ops.destroy_queue(dqm, &pdd->qpd, pqn->q);
 		if (retval) {
 			pr_err("Pasid 0x%x destroy queue %d failed, ret %d\n",
-				pqm->process->pasid,
+				pdd->pasid,
 				pqn->q->properties.queue_id, retval);
-			if (retval != -ETIME && retval != -EIO)
+			if (retval != -ETIME)
 				goto err_destroy_queue;
 		}
 		kfd_procfs_del_queue(pqn->q);
