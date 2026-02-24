@@ -6362,8 +6362,7 @@ static void fill_stream_properties_from_drm_display_mode(
 			&& aconnector->force_yuv420_output)
 		timing_out->pixel_encoding = PIXEL_ENCODING_YCBCR420;
 	else if ((connector->display_info.color_formats & DRM_COLOR_FORMAT_YCBCR422)
-			&& aconnector
-			&& aconnector->force_yuv422_output)
+			&& stream->signal == SIGNAL_TYPE_HDMI_TYPE_A)
 		timing_out->pixel_encoding = PIXEL_ENCODING_YCBCR422;
 	else if ((connector->display_info.color_formats & DRM_COLOR_FORMAT_YCBCR444)
 			&& stream->signal == SIGNAL_TYPE_HDMI_TYPE_A)
@@ -7593,12 +7592,12 @@ cleanup:
 }
 
 struct dc_stream_state *
-create_validate_stream_for_sink(struct drm_connector *connector,
+create_validate_stream_for_sink(struct amdgpu_dm_connector *aconnector,
 				const struct drm_display_mode *drm_mode,
 				const struct dm_connector_state *dm_state,
 				const struct dc_stream_state *old_stream)
 {
-	struct amdgpu_dm_connector *aconnector = NULL;
+	struct drm_connector *connector = &aconnector->base;
 	struct amdgpu_device *adev = drm_to_adev(connector->dev);
 	struct dc_stream_state *stream;
 	const struct drm_connector_state *drm_state = dm_state ? &dm_state->base : NULL;
@@ -7609,16 +7608,11 @@ create_validate_stream_for_sink(struct drm_connector *connector,
 	if (!dm_state)
 		return NULL;
 
-	if (connector->connector_type != DRM_MODE_CONNECTOR_WRITEBACK)
-		aconnector = to_amdgpu_dm_connector(connector);
-
-	if (aconnector &&
-	    (aconnector->dc_link->connector_signal == SIGNAL_TYPE_HDMI_TYPE_A ||
-	     aconnector->dc_link->dpcd_caps.dongle_type == DISPLAY_DONGLE_DP_HDMI_CONVERTER))
+	if (aconnector->dc_link->connector_signal == SIGNAL_TYPE_HDMI_TYPE_A ||
+	    aconnector->dc_link->dpcd_caps.dongle_type == DISPLAY_DONGLE_DP_HDMI_CONVERTER)
 		bpc_limit = 8;
 
 	do {
-		drm_dbg_kms(connector->dev, "Trying with %d bpc\n", requested_bpc);
 		stream = create_stream_for_sink(connector, drm_mode,
 						dm_state, old_stream,
 						requested_bpc);
@@ -7627,11 +7621,10 @@ create_validate_stream_for_sink(struct drm_connector *connector,
 			break;
 		}
 
-		dc_result = dc_validate_stream(adev->dm.dc, stream);
-
-		if (!aconnector) /* writeback connector */
+		if (aconnector->base.connector_type == DRM_MODE_CONNECTOR_WRITEBACK)
 			return stream;
 
+		dc_result = dc_validate_stream(adev->dm.dc, stream);
 		if (dc_result == DC_OK && stream->signal == SIGNAL_TYPE_DISPLAY_PORT_MST)
 			dc_result = dm_dp_mst_is_port_support_mode(aconnector, stream);
 
@@ -7654,41 +7647,16 @@ create_validate_stream_for_sink(struct drm_connector *connector,
 
 	} while (stream == NULL && requested_bpc >= bpc_limit);
 
-	switch (dc_result) {
-	/*
-	 * If we failed to validate DP bandwidth stream with the requested RGB color depth,
-	 * we try to fallback and configure in order:
-	 * YUV422 (8bpc, 6bpc)
-	 * YUV420 (8bpc, 6bpc)
-	 */
-	case DC_FAIL_ENC_VALIDATE:
-	case DC_EXCEED_DONGLE_CAP:
-	case DC_NO_DP_LINK_BANDWIDTH:
-		/* recursively entered twice and already tried both YUV422 and YUV420 */
-		if (aconnector->force_yuv422_output && aconnector->force_yuv420_output)
-			break;
-		/* first failure; try YUV422 */
-		if (!aconnector->force_yuv422_output) {
-			drm_dbg_kms(connector->dev, "%s:%d Validation failed with %d, retrying w/ YUV422\n",
-				    __func__, __LINE__, dc_result);
-			aconnector->force_yuv422_output = true;
-		/* recursively entered and YUV422 failed, try YUV420 */
-		} else if (!aconnector->force_yuv420_output) {
-			drm_dbg_kms(connector->dev, "%s:%d Validation failed with %d, retrying w/ YUV420\n",
-				    __func__, __LINE__, dc_result);
-			aconnector->force_yuv420_output = true;
-		}
-		stream = create_validate_stream_for_sink(connector, drm_mode,
-							 dm_state, old_stream);
-		aconnector->force_yuv422_output = false;
+	if ((dc_result == DC_FAIL_ENC_VALIDATE ||
+	     dc_result == DC_EXCEED_DONGLE_CAP) &&
+	     !aconnector->force_yuv420_output) {
+		DRM_DEBUG_KMS("%s:%d Retry forcing yuv420 encoding\n",
+				     __func__, __LINE__);
+
+		aconnector->force_yuv420_output = true;
+		stream = create_validate_stream_for_sink(aconnector, drm_mode,
+						dm_state, old_stream);
 		aconnector->force_yuv420_output = false;
-		break;
-	case DC_OK:
-		break;
-	default:
-		drm_dbg_kms(connector->dev, "%s:%d Unhandled validation failure %d\n",
-			    __func__, __LINE__, dc_result);
-		break;
 	}
 
 	return stream;
@@ -7699,11 +7667,9 @@ enum drm_mode_status amdgpu_dm_connector_mode_valid(struct drm_connector *connec
 {
 	int result = MODE_ERROR;
 	struct dc_sink *dc_sink;
+	struct drm_display_mode *test_mode;
 	/* TODO: Unhardcode stream count */
 	struct dc_stream_state *stream;
-	/* we always have an amdgpu_dm_connector here since we got
-	 * here via the amdgpu_dm_connector_helper_funcs
-	 */
 	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
 
 	if ((mode->flags & DRM_MODE_FLAG_INTERLACE) ||
@@ -7726,11 +7692,16 @@ enum drm_mode_status amdgpu_dm_connector_mode_valid(struct drm_connector *connec
 		goto fail;
 	}
 
-	drm_mode_set_crtcinfo(mode, 0);
+	test_mode = drm_mode_duplicate(connector->dev, mode);
+	if (!test_mode)
+		goto fail;
 
-	stream = create_validate_stream_for_sink(connector, mode,
+	drm_mode_set_crtcinfo(test_mode, 0);
+
+	stream = create_validate_stream_for_sink(aconnector, test_mode,
 						 to_dm_connector_state(connector->state),
 						 NULL);
+	drm_mode_destroy(connector->dev, test_mode);
 	if (stream) {
 		dc_stream_release(stream);
 		result = MODE_OK;
@@ -10853,7 +10824,7 @@ static int dm_update_crtc_state(struct amdgpu_display_manager *dm,
 		if (!drm_atomic_crtc_needs_modeset(new_crtc_state))
 			goto skip_modeset;
 
-		new_stream = create_validate_stream_for_sink(connector,
+		new_stream = create_validate_stream_for_sink(aconnector,
 							     &new_crtc_state->mode,
 							     dm_new_conn_state,
 							     dm_old_crtc_state->stream);
