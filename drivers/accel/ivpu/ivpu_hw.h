@@ -1,22 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (C) 2020-2025 Intel Corporation
+ * Copyright (C) 2020-2024 Intel Corporation
  */
 
 #ifndef __IVPU_HW_H__
 #define __IVPU_HW_H__
 
-#include <linux/kfifo.h>
-
 #include "ivpu_drv.h"
 #include "ivpu_hw_btrs.h"
 #include "ivpu_hw_ip.h"
-
-#define IVPU_HW_IRQ_FIFO_LENGTH 1024
-
-#define IVPU_HW_IRQ_SRC_IPC 1
-#define IVPU_HW_IRQ_SRC_MMU_EVTQ 2
-#define IVPU_HW_IRQ_SRC_DCT 3
 
 struct ivpu_addr_range {
 	resource_size_t start;
@@ -27,7 +19,6 @@ struct ivpu_hw_info {
 	struct {
 		bool (*btrs_irq_handler)(struct ivpu_device *vdev, int irq);
 		bool (*ip_irq_handler)(struct ivpu_device *vdev, int irq);
-		DECLARE_KFIFO(fifo, u8, IVPU_HW_IRQ_FIFO_LENGTH);
 	} irq;
 	struct {
 		struct ivpu_addr_range global;
@@ -86,14 +77,19 @@ static inline u64 ivpu_hw_range_size(const struct ivpu_addr_range *range)
 	return range->end - range->start;
 }
 
-static inline u32 ivpu_hw_dpu_max_freq_get(struct ivpu_device *vdev)
+static inline u32 ivpu_hw_ratio_to_freq(struct ivpu_device *vdev, u32 ratio)
 {
-	return ivpu_hw_btrs_dpu_max_freq_get(vdev);
+	return ivpu_hw_btrs_ratio_to_freq(vdev, ratio);
 }
 
 static inline void ivpu_hw_irq_clear(struct ivpu_device *vdev)
 {
 	ivpu_hw_ip_irq_clear(vdev);
+}
+
+static inline u32 ivpu_hw_pll_freq_get(struct ivpu_device *vdev)
+{
+	return ivpu_hw_btrs_pll_freq_get(vdev);
 }
 
 static inline u32 ivpu_hw_profiling_freq_get(struct ivpu_device *vdev)

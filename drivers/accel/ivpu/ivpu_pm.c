@@ -462,8 +462,9 @@ int ivpu_pm_dct_disable(struct ivpu_device *vdev)
 	return 0;
 }
 
-void ivpu_pm_dct_irq_thread_handler(struct ivpu_device *vdev)
+void ivpu_pm_irq_dct_work_fn(struct work_struct *work)
 {
+	struct ivpu_device *vdev = container_of(work, struct ivpu_device, irq_dct_work);
 	bool enable;
 	int ret;
 
@@ -475,11 +476,6 @@ void ivpu_pm_dct_irq_thread_handler(struct ivpu_device *vdev)
 	else
 		ret = ivpu_pm_dct_disable(vdev);
 
-	if (!ret) {
-		/* Convert percent to U1.7 format */
-		u8 val = DIV_ROUND_CLOSEST(vdev->pm->dct_active_percent * 128, 100);
-
-		ivpu_hw_btrs_dct_set_status(vdev, enable, val);
-	}
-
+	if (!ret)
+		ivpu_hw_btrs_dct_set_status(vdev, enable, vdev->pm->dct_active_percent);
 }
