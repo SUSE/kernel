@@ -939,7 +939,7 @@ static const struct amdgpu_mes_funcs mes_v12_0_funcs = {
 };
 
 static int mes_v12_0_allocate_ucode_buffer(struct amdgpu_device *adev,
-					   enum admgpu_mes_pipe pipe)
+					   enum amdgpu_mes_pipe pipe)
 {
 	int r;
 	const struct mes_firmware_header_v1_0 *mes_hdr;
@@ -973,7 +973,7 @@ static int mes_v12_0_allocate_ucode_buffer(struct amdgpu_device *adev,
 }
 
 static int mes_v12_0_allocate_ucode_data_buffer(struct amdgpu_device *adev,
-						enum admgpu_mes_pipe pipe)
+						enum amdgpu_mes_pipe pipe)
 {
 	int r;
 	const struct mes_firmware_header_v1_0 *mes_hdr;
@@ -1007,7 +1007,7 @@ static int mes_v12_0_allocate_ucode_data_buffer(struct amdgpu_device *adev,
 }
 
 static void mes_v12_0_free_ucode_buffers(struct amdgpu_device *adev,
-					 enum admgpu_mes_pipe pipe)
+					 enum amdgpu_mes_pipe pipe)
 {
 	amdgpu_bo_free_kernel(&adev->mes.data_fw_obj[pipe],
 			      &adev->mes.data_fw_gpu_addr[pipe],
@@ -1113,7 +1113,7 @@ static void mes_v12_0_set_ucode_start_addr(struct amdgpu_device *adev)
 
 /* This function is for backdoor MES firmware */
 static int mes_v12_0_load_microcode(struct amdgpu_device *adev,
-				    enum admgpu_mes_pipe pipe, bool prime_icache)
+				    enum amdgpu_mes_pipe pipe, bool prime_icache)
 {
 	int r;
 	uint32_t data;
@@ -1177,7 +1177,7 @@ static int mes_v12_0_load_microcode(struct amdgpu_device *adev,
 }
 
 static int mes_v12_0_allocate_eop_buf(struct amdgpu_device *adev,
-				      enum admgpu_mes_pipe pipe)
+				      enum amdgpu_mes_pipe pipe)
 {
 	int r;
 	u32 *eop;
@@ -1398,7 +1398,7 @@ static int mes_v12_0_kiq_enable_queue(struct amdgpu_device *adev)
 }
 
 static int mes_v12_0_queue_init(struct amdgpu_device *adev,
-				enum admgpu_mes_pipe pipe)
+				enum amdgpu_mes_pipe pipe)
 {
 	struct amdgpu_ring *ring;
 	int r;
@@ -1501,7 +1501,7 @@ static int mes_v12_0_kiq_ring_init(struct amdgpu_device *adev)
 }
 
 static int mes_v12_0_mqd_sw_init(struct amdgpu_device *adev,
-				 enum admgpu_mes_pipe pipe)
+				 enum amdgpu_mes_pipe pipe)
 {
 	int r, mqd_size = sizeof(struct v12_compute_mqd);
 	struct amdgpu_ring *ring;
