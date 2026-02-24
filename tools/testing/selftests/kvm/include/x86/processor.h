@@ -27,6 +27,8 @@ extern uint64_t guest_tsc_khz;
 #define MAX_NR_CPUID_ENTRIES 100
 #endif
 
+#define NONCANONICAL 0xaaaaaaaaaaaaaaaaull
+
 /* Forced emulation prefix, used to invoke the emulator unconditionally. */
 #define KVM_FEP "ud2; .byte 'k', 'v', 'm';"
 
@@ -1306,6 +1308,11 @@ static inline bool kvm_is_pmu_enabled(void)
 static inline bool kvm_is_forced_emulation_enabled(void)
 {
 	return !!get_kvm_param_integer("force_emulation_prefix");
+}
+
+static inline bool kvm_is_ignore_msrs(void)
+{
+	return get_kvm_param_bool("ignore_msrs");
 }
 
 uint64_t *__vm_get_page_table_entry(struct kvm_vm *vm, uint64_t vaddr,
