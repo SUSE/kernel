@@ -362,9 +362,7 @@ int amdgpu_mes_map_legacy_queue(struct amdgpu_device *adev,
 	queue_input.mqd_addr = amdgpu_bo_gpu_offset(ring->mqd_obj);
 	queue_input.wptr_addr = ring->wptr_gpu_addr;
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->map_legacy_queue(&adev->mes, &queue_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		DRM_ERROR("failed to map legacy queue\n");
 
@@ -387,9 +385,7 @@ int amdgpu_mes_unmap_legacy_queue(struct amdgpu_device *adev,
 	queue_input.trail_fence_addr = gpu_addr;
 	queue_input.trail_fence_data = seq;
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->unmap_legacy_queue(&adev->mes, &queue_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		DRM_ERROR("failed to unmap legacy queue\n");
 
@@ -416,9 +412,7 @@ int amdgpu_mes_reset_legacy_queue(struct amdgpu_device *adev,
 	queue_input.vmid = vmid;
 	queue_input.use_mmio = use_mmio;
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->reset_legacy_queue(&adev->mes, &queue_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
 		DRM_ERROR("failed to reset legacy queue\n");
 
@@ -434,7 +428,7 @@ uint32_t amdgpu_mes_rreg(struct amdgpu_device *adev, uint32_t reg)
 	uint32_t *read_val_ptr;
 
 	if (amdgpu_device_wb_get(adev, &addr_offset)) {
-		DRM_ERROR("critical bug! too many mes readers\n");
+		dev_err(adev->dev, "critical bug! too many mes readers\n");
 		goto error;
 	}
 	read_val_gpu_addr = adev->wb.gpu_addr + (addr_offset * 4);
@@ -444,15 +438,13 @@ uint32_t amdgpu_mes_rreg(struct amdgpu_device *adev, uint32_t reg)
 	op_input.read_reg.buffer_addr = read_val_gpu_addr;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes rreg is not supported!\n");
+		dev_err(adev->dev, "mes rreg is not supported!\n");
 		goto error;
 	}
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to read reg (0x%x)\n", reg);
+		dev_err(adev->dev, "failed to read reg (0x%x)\n", reg);
 	else
 		val = *(read_val_ptr);
 
@@ -473,16 +465,14 @@ int amdgpu_mes_wreg(struct amdgpu_device *adev,
 	op_input.write_reg.reg_value = val;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes wreg is not supported!\n");
+		dev_err(adev->dev, "mes wreg is not supported!\n");
 		r = -EINVAL;
 		goto error;
 	}
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to write reg (0x%x)\n", reg);
+		dev_err(adev->dev, "failed to write reg (0x%x)\n", reg);
 
 error:
 	return r;
@@ -502,16 +492,14 @@ int amdgpu_mes_reg_write_reg_wait(struct amdgpu_device *adev,
 	op_input.wrm_reg.mask = mask;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes reg_write_reg_wait is not supported!\n");
+		dev_err(adev->dev, "mes reg_write_reg_wait is not supported!\n");
 		r = -EINVAL;
 		goto error;
 	}
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to reg_write_reg_wait\n");
+		dev_err(adev->dev, "failed to reg_write_reg_wait\n");
 
 error:
 	return r;
@@ -529,16 +517,14 @@ int amdgpu_mes_reg_wait(struct amdgpu_device *adev, uint32_t reg,
 	op_input.wrm_reg.mask = mask;
 
 	if (!adev->mes.funcs->misc_op) {
-		DRM_ERROR("mes reg wait is not supported!\n");
+		dev_err(adev->dev, "mes reg wait is not supported!\n");
 		r = -EINVAL;
 		goto error;
 	}
 
-	amdgpu_mes_lock(&adev->mes);
 	r = adev->mes.funcs->misc_op(&adev->mes, &op_input);
-	amdgpu_mes_unlock(&adev->mes);
 	if (r)
-		DRM_ERROR("failed to reg_write_reg_wait\n");
+		dev_err(adev->dev, "failed to reg_write_reg_wait\n");
 
 error:
 	return r;
