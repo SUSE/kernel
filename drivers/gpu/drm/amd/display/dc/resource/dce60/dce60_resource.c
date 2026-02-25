@@ -48,7 +48,7 @@
 #include "dce/dce_clock_source.h"
 #include "dce/dce_audio.h"
 #include "dce/dce_hwseq.h"
-#include "dce60/dce60_hw_sequencer.h"
+#include "dce60/dce60_hwseq.h"
 #include "dce100/dce100_resource.h"
 #include "dce/dce_panel_cntl.h"
 
@@ -403,13 +403,13 @@ static const struct dc_plane_cap plane_cap = {
 	},
 
 	.max_upscale_factor = {
-			.argb8888 = 1,
+			.argb8888 = 16000,
 			.nv12 = 1,
 			.fp16 = 1
 	},
 
 	.max_downscale_factor = {
-			.argb8888 = 1,
+			.argb8888 = 250,
 			.nv12 = 1,
 			.fp16 = 1
 	}
