@@ -2344,7 +2344,6 @@ static int intel_crtc_compute_pipe_src(struct intel_crtc_state *crtc_state)
 {
 	struct intel_display *display = to_intel_display(crtc_state);
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
-	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
 
 	intel_joiner_compute_pipe_src(crtc_state);
 
@@ -2363,7 +2362,7 @@ static int intel_crtc_compute_pipe_src(struct intel_crtc_state *crtc_state)
 		}
 
 		if (intel_crtc_has_type(crtc_state, INTEL_OUTPUT_LVDS) &&
-		    intel_is_dual_link_lvds(i915)) {
+		    intel_is_dual_link_lvds(display)) {
 			drm_dbg_kms(display->drm,
 				    "[CRTC:%d:%s] Odd pipe source width not supported with dual link LVDS\n",
 				    crtc->base.base.id, crtc->base.name);
@@ -7681,7 +7680,7 @@ void intel_setup_outputs(struct intel_display *display)
 		 * to prevent the registration of both eDP and LVDS and the
 		 * incorrect sharing of the PPS.
 		 */
-		intel_lvds_init(dev_priv);
+		intel_lvds_init(display);
 		intel_crt_init(display);
 
 		dpd_is_edp = intel_dp_is_port_edp(display, PORT_D);
@@ -7758,13 +7757,13 @@ void intel_setup_outputs(struct intel_display *display)
 
 		vlv_dsi_init(display);
 	} else if (display->platform.pineview) {
-		intel_lvds_init(dev_priv);
+		intel_lvds_init(display);
 		intel_crt_init(display);
 	} else if (IS_DISPLAY_VER(display, 3, 4)) {
 		bool found = false;
 
 		if (display->platform.mobile)
-			intel_lvds_init(dev_priv);
+			intel_lvds_init(display);
 
 		intel_crt_init(display);
 
@@ -7806,7 +7805,7 @@ void intel_setup_outputs(struct intel_display *display)
 			intel_tv_init(display);
 	} else if (DISPLAY_VER(display) == 2) {
 		if (display->platform.i85x)
-			intel_lvds_init(dev_priv);
+			intel_lvds_init(display);
 
 		intel_crt_init(display);
 		intel_dvo_init(display);
