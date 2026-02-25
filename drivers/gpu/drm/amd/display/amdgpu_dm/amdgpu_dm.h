@@ -151,19 +151,17 @@ struct idle_workqueue {
 	bool running;
 };
 
+#define MAX_LUMINANCE_DATA_POINTS 99
+
 /**
- * struct vupdate_offload_work - Work data for offloading task from vupdate handler
- * @work: Kernel work data for the work event
- * @adev: amdgpu_device back pointer
- * @stream: DC stream associated with the crtc
- * @adjust: DC CRTC timing adjust to be applied to the crtc
+ * struct amdgpu_dm_luminance_data - Custom luminance data
+ * @luminance: Luminance in percent
+ * @input_signal: Input signal in range 0-255
  */
-struct vupdate_offload_work {
-	struct work_struct work;
-	struct amdgpu_device *adev;
-	struct dc_stream_state *stream;
-	struct dc_crtc_timing_adjust *adjust;
-};
+struct amdgpu_dm_luminance_data {
+	u8 luminance;
+	u8 input_signal;
+} __packed;
 
 /**
  * struct amdgpu_dm_backlight_caps - Information about backlight
@@ -209,6 +207,14 @@ struct amdgpu_dm_backlight_caps {
 	 * @dc_level: the default brightness if booted on DC
 	 */
 	u8 dc_level;
+	/**
+	 * @data_points: the number of custom luminance data points
+	 */
+	u8 data_points;
+	/**
+	 * @luminance_data: custom luminance data
+	 */
+	struct amdgpu_dm_luminance_data luminance_data[MAX_LUMINANCE_DATA_POINTS];
 };
 
 /**
@@ -620,6 +626,13 @@ struct amdgpu_display_manager {
 	 * Bounding box data read from dmub during early initialization for DCN4+
 	 */
 	struct dml2_soc_bb *bb_from_dmub;
+
+	/**
+	 * @oem_i2c:
+	 *
+	 * OEM i2c bus
+	 */
+	struct amdgpu_i2c_adapter *oem_i2c;
 };
 
 enum dsc_clock_force_state {
@@ -740,7 +753,6 @@ struct amdgpu_dm_connector {
 
 	bool fake_enable;
 	bool force_yuv420_output;
-	bool force_yuv422_output;
 	struct dsc_preferred_settings dsc_settings;
 	union dp_downstream_port_present mst_downstream_port_present;
 	/* Cached display modes */
@@ -964,7 +976,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
 				     int link_index);
 
 enum drm_mode_status amdgpu_dm_connector_mode_valid(struct drm_connector *connector,
-				   struct drm_display_mode *mode);
+				   const struct drm_display_mode *mode);
 
 void dm_restore_drm_connector_state(struct drm_device *dev,
 				    struct drm_connector *connector);

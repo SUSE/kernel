@@ -606,6 +606,14 @@ u32 ivpu_hw_btrs_dpu_max_freq_get(struct ivpu_device *vdev)
 	return pll_ratio_to_dpu_freq(vdev, vdev->hw->pll.max_ratio);
 }
 
+u32 ivpu_hw_btrs_dpu_freq_get(struct ivpu_device *vdev)
+{
+	if (ivpu_hw_btrs_gen(vdev) == IVPU_HW_BTRS_MTL)
+		return pll_ratio_to_dpu_freq_mtl(pll_config_get_mtl(vdev));
+	else
+		return pll_ratio_to_dpu_freq_lnl(pll_config_get_lnl(vdev));
+}
+
 /* Handler for IRQs from Buttress core (irqB) */
 bool ivpu_hw_btrs_irq_handler_mtl(struct ivpu_device *vdev, int irq)
 {
@@ -666,8 +674,7 @@ bool ivpu_hw_btrs_irq_handler_lnl(struct ivpu_device *vdev, int irq)
 
 	if (REG_TEST_FLD(VPU_HW_BTRS_LNL_INTERRUPT_STAT, SURV_ERR, status)) {
 		ivpu_dbg(vdev, IRQ, "Survivability IRQ\n");
-		if (!kfifo_put(&vdev->hw->irq.fifo, IVPU_HW_IRQ_SRC_DCT))
-			ivpu_err_ratelimited(vdev, "IRQ FIFO full\n");
+		queue_work(system_wq, &vdev->irq_dct_work);
 	}
 
 	if (REG_TEST_FLD(VPU_HW_BTRS_LNL_INTERRUPT_STAT, FREQ_CHANGE, status)) {
@@ -746,7 +753,7 @@ int ivpu_hw_btrs_dct_get_request(struct ivpu_device *vdev, bool *enable)
 	}
 }
 
-void ivpu_hw_btrs_dct_set_status(struct ivpu_device *vdev, bool enable, u8 active_percent)
+void ivpu_hw_btrs_dct_set_status(struct ivpu_device *vdev, bool enable, u32 active_percent)
 {
 	u32 val = 0;
 	u32 cmd = enable ? DCT_ENABLE : DCT_DISABLE;
@@ -873,4 +880,11 @@ void ivpu_hw_btrs_diagnose_failure(struct ivpu_device *vdev)
 		return diagnose_failure_mtl(vdev);
 	else
 		return diagnose_failure_lnl(vdev);
+}
+
+int ivpu_hw_btrs_platform_read(struct ivpu_device *vdev)
+{
+	u32 reg = REGB_RD32(VPU_HW_BTRS_LNL_VPU_STATUS);
+
+	return REG_GET_FLD(VPU_HW_BTRS_LNL_VPU_STATUS, PLATFORM, reg);
 }
