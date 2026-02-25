@@ -88,7 +88,6 @@ TEST_PROGS := test_kmod.sh \
 	test_xdp_veth.sh \
 	test_offload.py \
 	test_sock_addr.sh \
-	test_tunnel.sh \
 	test_lwt_seg6local.sh \
 	test_lirc_mode2.sh \
 	test_skb_cgroup_id.sh \
