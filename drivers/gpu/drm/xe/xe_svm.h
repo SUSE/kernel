@@ -6,6 +6,8 @@
 #ifndef _XE_SVM_H_
 #define _XE_SVM_H_
 
+#if IS_ENABLED(CONFIG_DRM_XE_GPUSVM)
+
 #include <drm/drm_pagemap.h>
 #include <drm/drm_gpusvm.h>
 
@@ -39,7 +41,6 @@ struct xe_svm_range {
 	u8 tile_invalidated;
 };
 
-#if IS_ENABLED(CONFIG_DRM_GPUSVM)
 /**
  * xe_svm_range_pages_valid() - SVM range pages valid
  * @range: SVM range
@@ -69,9 +70,51 @@ int xe_svm_bo_evict(struct xe_bo *bo);
 
 void xe_svm_range_debug(struct xe_svm_range *range, const char *operation);
 
+/**
+ * xe_svm_range_has_dma_mapping() - SVM range has DMA mapping
+ * @range: SVM range
+ *
+ * Return: True if SVM range has a DMA mapping, False otherwise
+ */
+static inline bool xe_svm_range_has_dma_mapping(struct xe_svm_range *range)
+{
+	lockdep_assert_held(&range->base.gpusvm->notifier_lock);
+	return range->base.flags.has_dma_mapping;
+}
+
+#define xe_svm_assert_in_notifier(vm__) \
+	lockdep_assert_held_write(&(vm__)->svm.gpusvm.notifier_lock)
+
+#define xe_svm_notifier_lock(vm__)	\
+	drm_gpusvm_notifier_lock(&(vm__)->svm.gpusvm)
+
+#define xe_svm_notifier_unlock(vm__)	\
+	drm_gpusvm_notifier_unlock(&(vm__)->svm.gpusvm)
+
 void xe_svm_flush(struct xe_vm *vm);
 
 #else
+#include <linux/interval_tree.h>
+
+struct drm_pagemap_device_addr;
+struct xe_bo;
+struct xe_gt;
+struct xe_vm;
+struct xe_vma;
+struct xe_tile;
+struct xe_vram_region;
+
+#define XE_INTERCONNECT_VRAM 1
+
+struct xe_svm_range {
+	struct {
+		struct interval_tree_node itree;
+		const struct drm_pagemap_device_addr *dma_addr;
+	} base;
+	u32 tile_present;
+	u32 tile_invalidated;
+};
+
 static inline bool xe_svm_range_pages_valid(struct xe_svm_range *range)
 {
 	return false;
@@ -124,31 +167,19 @@ void xe_svm_range_debug(struct xe_svm_range *range, const char *operation)
 {
 }
 
+#define xe_svm_assert_in_notifier(...) do {} while (0)
+#define xe_svm_range_has_dma_mapping(...) false
+
+static inline void xe_svm_notifier_lock(struct xe_vm *vm)
+{
+}
+
+static inline void xe_svm_notifier_unlock(struct xe_vm *vm)
+{
+}
+
 static inline void xe_svm_flush(struct xe_vm *vm)
 {
 }
-
 #endif
-
-/**
- * xe_svm_range_has_dma_mapping() - SVM range has DMA mapping
- * @range: SVM range
- *
- * Return: True if SVM range has a DMA mapping, False otherwise
- */
-static inline bool xe_svm_range_has_dma_mapping(struct xe_svm_range *range)
-{
-	lockdep_assert_held(&range->base.gpusvm->notifier_lock);
-	return range->base.flags.has_dma_mapping;
-}
-
-#define xe_svm_assert_in_notifier(vm__) \
-	lockdep_assert_held_write(&(vm__)->svm.gpusvm.notifier_lock)
-
-#define xe_svm_notifier_lock(vm__)	\
-	drm_gpusvm_notifier_lock(&(vm__)->svm.gpusvm)
-
-#define xe_svm_notifier_unlock(vm__)	\
-	drm_gpusvm_notifier_unlock(&(vm__)->svm.gpusvm)
-
 #endif

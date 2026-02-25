@@ -349,6 +349,8 @@ static void xe_svm_garbage_collector_work_func(struct work_struct *w)
 	up_write(&vm->lock);
 }
 
+#if IS_ENABLED(CONFIG_DRM_XE_DEVMEM_MIRROR)
+
 static struct xe_vram_region *page_to_vr(struct page *page)
 {
 	return container_of(page_pgmap(page), struct xe_vram_region, pagemap);
@@ -587,6 +589,8 @@ static const struct drm_gpusvm_devmem_ops gpusvm_devmem_ops = {
 	.copy_to_ram = xe_svm_copy_to_ram,
 };
 
+#endif
+
 static const struct drm_gpusvm_ops gpusvm_ops = {
 	.range_alloc = xe_svm_range_alloc,
 	.range_free = xe_svm_range_free,
@@ -667,6 +671,7 @@ static bool xe_svm_range_is_valid(struct xe_svm_range *range,
 		(!devmem_only || xe_svm_range_in_vram(range));
 }
 
+#if IS_ENABLED(CONFIG_DRM_XE_DEVMEM_MIRROR)
 static struct xe_vram_region *tile_to_vr(struct xe_tile *tile)
 {
 	return &tile->mem.vram;
@@ -728,6 +733,14 @@ unlock:
 
 	return err;
 }
+#else
+static int xe_svm_alloc_vram(struct xe_vm *vm, struct xe_tile *tile,
+			     struct xe_svm_range *range,
+			     const struct drm_gpusvm_ctx *ctx)
+{
+	return -EOPNOTSUPP;
+}
+#endif
 
 static bool supports_4K_migration(struct xe_device *xe)
 {
@@ -934,6 +947,7 @@ int xe_svm_bo_evict(struct xe_bo *bo)
 }
 
 #if IS_ENABLED(CONFIG_DRM_XE_DEVMEM_MIRROR)
+
 static struct drm_pagemap_device_addr
 xe_drm_pagemap_device_map(struct drm_pagemap *dpagemap,
 			  struct device *dev,
