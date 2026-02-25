@@ -763,7 +763,7 @@ static unsigned int icl_qgv_bw(struct intel_display *display,
 
 void intel_bw_init_hw(struct intel_display *display)
 {
-	const struct dram_info *dram_info = &dev_priv->dram_info;
+	const struct dram_info *dram_info = &to_i915(display->drm)->dram_info;
 
 	if (!HAS_DISPLAY(display))
 		return;
