@@ -415,7 +415,7 @@ static __always_inline int encap_ipv6(struct __sk_buff *skb, __u8 encap_proto,
 	return __encap_ipv6(skb, encap_proto, l2_proto, 0);
 }
 
-SEC("encap_ipip_none")
+SEC("tc")
 int __encap_ipip_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -424,7 +424,7 @@ int __encap_ipip_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_gre_none")
+SEC("tc")
 int __encap_gre_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -433,7 +433,7 @@ int __encap_gre_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_gre_mpls")
+SEC("tc")
 int __encap_gre_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -442,7 +442,7 @@ int __encap_gre_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_gre_eth")
+SEC("tc")
 int __encap_gre_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -451,7 +451,7 @@ int __encap_gre_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_udp_none")
+SEC("tc")
 int __encap_udp_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -460,7 +460,7 @@ int __encap_udp_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_udp_mpls")
+SEC("tc")
 int __encap_udp_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -469,7 +469,7 @@ int __encap_udp_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_udp_eth")
+SEC("tc")
 int __encap_udp_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -478,7 +478,7 @@ int __encap_udp_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_vxlan_eth")
+SEC("tc")
 int __encap_vxlan_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -489,7 +489,7 @@ int __encap_vxlan_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_sit_none")
+SEC("tc")
 int __encap_sit_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -498,7 +498,7 @@ int __encap_sit_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6tnl_none")
+SEC("tc")
 int __encap_ip6tnl_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -507,7 +507,7 @@ int __encap_ip6tnl_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ipip6_none")
+SEC("tc")
 int __encap_ipip6_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -516,7 +516,7 @@ int __encap_ipip6_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6gre_none")
+SEC("tc")
 int __encap_ip6gre_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -525,7 +525,7 @@ int __encap_ip6gre_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6gre_mpls")
+SEC("tc")
 int __encap_ip6gre_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -534,7 +534,7 @@ int __encap_ip6gre_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6gre_eth")
+SEC("tc")
 int __encap_ip6gre_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -543,7 +543,7 @@ int __encap_ip6gre_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6udp_none")
+SEC("tc")
 int __encap_ip6udp_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -552,7 +552,7 @@ int __encap_ip6udp_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6udp_mpls")
+SEC("tc")
 int __encap_ip6udp_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -561,7 +561,7 @@ int __encap_ip6udp_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6udp_eth")
+SEC("tc")
 int __encap_ip6udp_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -570,7 +570,7 @@ int __encap_ip6udp_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("encap_ip6vxlan_eth")
+SEC("tc")
 int __encap_ip6vxlan_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -677,7 +677,7 @@ static int decap_ipv6(struct __sk_buff *skb)
 			      iph_outer.nexthdr);
 }
 
-SEC("decap")
+SEC("tc")
 int decap_f(struct __sk_buff *skb)
 {
 	switch (skb->protocol) {
