@@ -32,18 +32,11 @@
 
 #include <drm/ttm/ttm_placement.h>
 
-/**
- * vmw_bo_free - vmw_bo destructor
- *
- * @bo: Pointer to the embedded struct ttm_buffer_object
- */
-static void vmw_bo_free(struct ttm_buffer_object *bo)
+static void vmw_bo_release(struct vmw_bo *vbo)
 {
 	struct vmw_resource *res;
-	struct vmw_bo *vbo = to_vmw_bo(&bo->base);
 
-	WARN_ON(vbo->tbo.base.funcs &&
-		kref_read(&vbo->tbo.base.refcount) != 0);
+	WARN_ON(kref_read(&vbo->tbo.base.refcount) != 0);
 	vmw_bo_unmap(vbo);
 
 	xa_destroy(&vbo->detached_resources);
@@ -69,8 +62,20 @@ static void vmw_bo_free(struct ttm_buffer_object *bo)
 		}
 		vmw_surface_unreference(&vbo->dumb_surface);
 	}
-	WARN_ON(!RB_EMPTY_ROOT(&vbo->res_tree));
 	drm_gem_object_release(&vbo->tbo.base);
+}
+
+/**
+ * vmw_bo_free - vmw_bo destructor
+ *
+ * @bo: Pointer to the embedded struct ttm_buffer_object
+ */
+static void vmw_bo_free(struct ttm_buffer_object *bo)
+{
+	struct vmw_bo *vbo = to_vmw_bo(&bo->base);
+
+	WARN_ON(!RB_EMPTY_ROOT(&vbo->res_tree));
+	vmw_bo_release(vbo);
 	WARN_ON(vbo->dirty);
 	kfree(vbo);
 }
@@ -463,6 +468,7 @@ int vmw_bo_create(struct vmw_private *vmw,
 	if (unlikely(ret != 0))
 		goto out_error;
 
+	(*p_bo)->tbo.base.funcs = &vmw_gem_object_funcs;
 	return ret;
 out_error:
 	*p_bo = NULL;
