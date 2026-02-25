@@ -6445,6 +6445,12 @@ int intel_atomic_check(struct drm_device *dev,
 	if (ret)
 		goto fail;
 
+	if (any_ms) {
+		ret = intel_bw_modeset_checks(state);
+		if (ret)
+			goto fail;
+	}
+
 	ret = intel_compute_global_watermarks(state);
 	if (ret)
 		goto fail;
