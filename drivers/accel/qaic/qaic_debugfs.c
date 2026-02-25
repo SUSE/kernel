@@ -241,7 +241,6 @@ static int qaic_bootlog_mhi_probe(struct mhi_device *mhi_dev, const struct mhi_d
 mhi_unprepare:
 	mhi_unprepare_from_transfer(mhi_dev);
 destroy_workqueue:
-	flush_workqueue(qdev->bootlog_wq);
 	destroy_workqueue(qdev->bootlog_wq);
 out:
 	return ret;
@@ -254,7 +253,6 @@ static void qaic_bootlog_mhi_remove(struct mhi_device *mhi_dev)
 	qdev = dev_get_drvdata(&mhi_dev->dev);
 
 	mhi_unprepare_from_transfer(qdev->bootlog_ch);
-	flush_workqueue(qdev->bootlog_wq);
 	destroy_workqueue(qdev->bootlog_wq);
 	qdev->bootlog_ch = NULL;
 }
