@@ -717,6 +717,9 @@ static int __init init_xstate_size(void)
 	fpu_user_cfg.default_size =
 		xstate_calculate_size(fpu_user_cfg.default_features, false);
 
+	guest_default_cfg.size =
+		xstate_calculate_size(guest_default_cfg.features, compacted);
+
 	return 0;
 }
 
@@ -735,6 +738,7 @@ static void __init fpu__init_disable_system_xstate(unsigned int legacy_size)
 	fpu_kernel_cfg.default_size = legacy_size;
 	fpu_user_cfg.max_size = legacy_size;
 	fpu_user_cfg.default_size = legacy_size;
+	guest_default_cfg.size = legacy_size;
 
 	/*
 	 * Prevent enabling the static branch which enables writes to the
@@ -743,6 +747,21 @@ static void __init fpu__init_disable_system_xstate(unsigned int legacy_size)
 	init_fpstate.xfd = 0;
 
 	fpstate_reset(&current->thread.fpu);
+}
+
+static u64 __init host_default_mask(void)
+{
+	/* Exclude dynamic features, which require userspace opt-in. */
+	return ~(u64)XFEATURE_MASK_USER_DYNAMIC;
+}
+
+static u64 __init guest_default_mask(void)
+{
+	/*
+	 * Exclude dynamic features, which require userspace opt-in even
+	 * for KVM guests.
+	 */
+	return ~(u64)XFEATURE_MASK_USER_DYNAMIC;
 }
 
 /*
@@ -832,12 +851,13 @@ void __init fpu__init_system_xstate(unsigned int legacy_size)
 	fpu_user_cfg.max_features = fpu_kernel_cfg.max_features;
 	fpu_user_cfg.max_features &= XFEATURE_MASK_USER_SUPPORTED;
 
-	/* Clean out dynamic features from default */
-	fpu_kernel_cfg.default_features = fpu_kernel_cfg.max_features;
-	fpu_kernel_cfg.default_features &= ~XFEATURE_MASK_USER_DYNAMIC;
-
-	fpu_user_cfg.default_features = fpu_user_cfg.max_features;
-	fpu_user_cfg.default_features &= ~XFEATURE_MASK_USER_DYNAMIC;
+	/*
+	 * Now, given maximum feature set, determine default values by
+	 * applying default masks.
+	 */
+	fpu_kernel_cfg.default_features = fpu_kernel_cfg.max_features & host_default_mask();
+	fpu_user_cfg.default_features   = fpu_user_cfg.max_features & host_default_mask();
+	guest_default_cfg.features      = fpu_kernel_cfg.max_features & guest_default_mask();
 
 	/* Store it for paranoia check at the end */
 	xfeatures = fpu_kernel_cfg.max_features;
