@@ -5315,6 +5315,8 @@ static __init void svm_set_cpu_caps(void)
 
 	/* Don't advertise Bus Lock Detect to guest if SVM support is absent */
 	kvm_cpu_cap_clear(X86_FEATURE_BUS_LOCK_DETECT);
+
+	kvm_setup_xss_caps();
 }
 
 static __init int svm_hardware_setup(void)
