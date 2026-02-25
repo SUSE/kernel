@@ -1361,7 +1361,6 @@ static int ti_sn_bridge_probe(struct auxiliary_device *adev,
 	if (ret)
 		return ret;
 
-	pdata->bridge.funcs = &ti_sn_bridge_funcs;
 	pdata->bridge.of_node = np;
 	pdata->bridge.type = pdata->next_bridge->type == DRM_MODE_CONNECTOR_DisplayPort
 			   ? DRM_MODE_CONNECTOR_DisplayPort : DRM_MODE_CONNECTOR_eDP;
@@ -1969,9 +1968,9 @@ static int ti_sn65dsi86_probe(struct i2c_client *client)
 		return -ENODEV;
 	}
 
-	pdata = devm_kzalloc(dev, sizeof(struct ti_sn65dsi86), GFP_KERNEL);
-	if (!pdata)
-		return -ENOMEM;
+	pdata = devm_drm_bridge_alloc(dev, struct ti_sn65dsi86, bridge, &ti_sn_bridge_funcs);
+	if (IS_ERR(pdata))
+		return PTR_ERR(pdata);
 	dev_set_drvdata(dev, pdata);
 	pdata->dev = dev;
 
