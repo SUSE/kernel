@@ -541,7 +541,7 @@ static bool kvm_fixup_exception(struct ex_regs *regs)
 		return false;
 
 	if (regs->vector == DE_VECTOR)
-		return false;
+		regs->vector = KVM_MAGIC_DE_VECTOR;
 
 	regs->rip = regs->r11;
 	regs->r9 = regs->vector;
