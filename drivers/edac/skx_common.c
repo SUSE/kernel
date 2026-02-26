@@ -821,10 +821,10 @@ void skx_remove(void)
 				pci_dev_put(d->imc[i].mdev);
 
 			if (d->imc[i].mbase)
+				iounmap(d->imc[i].mbase);
 
 			if (d->imc[i].dev)
 				put_device(d->imc[i].dev);
-				iounmap(d->imc[i].mbase);
 
 			for (j = 0; j < d->imc[i].num_channels; j++) {
 				if (d->imc[i].chan[j].cdev)
