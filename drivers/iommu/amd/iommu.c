@@ -2500,7 +2500,7 @@ struct protection_domain *protection_domain_alloc(unsigned int type, int nid)
 		break;
 	case AMD_IOMMU_NONE:
 		WARN_ON_ONCE(1);
-		return -EPERM;
+		return NULL;
 	default:
 		goto err_id;
 	}
