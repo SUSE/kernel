@@ -19,7 +19,6 @@
 #include <bpf/libbpf.h>
 
 #include "cgroup_helpers.h"
-#include "network_helpers.h"
 #include "bpf_util.h"
 
 #ifndef ENOTSUPP
@@ -939,6 +938,37 @@ static int cmp_peer_addr(int sock1, const struct sockaddr_storage *addr2)
 	return cmp_sock_addr(getpeername, sock1, addr2, /*cmp_port*/ 1);
 }
 
+static int start_server(int type, const struct sockaddr_storage *addr,
+			socklen_t addr_len)
+{
+	int fd;
+
+	fd = socket(addr->ss_family, type, 0);
+	if (fd == -1) {
+		log_err("Failed to create server socket");
+		goto out;
+	}
+
+	if (bind(fd, (const struct sockaddr *)addr, addr_len) == -1) {
+		log_err("Failed to bind server socket");
+		goto close_out;
+	}
+
+	if (type == SOCK_STREAM) {
+		if (listen(fd, 128) == -1) {
+			log_err("Failed to listen on server socket");
+			goto close_out;
+		}
+	}
+
+	goto out;
+close_out:
+	close(fd);
+	fd = -1;
+out:
+	return fd;
+}
+
 static int connect_to_server(int type, const struct sockaddr_storage *addr,
 			     socklen_t addr_len)
 {
@@ -1147,7 +1177,7 @@ static int run_bind_test_case(const struct sock_addr_test *test)
 	if (init_addrs(test, &requested_addr, &expected_addr, NULL))
 		goto err;
 
-	servfd = start_server_addr(test->type, &requested_addr, addr_len, NULL);
+	servfd = start_server(test->type, &requested_addr, addr_len);
 	if (servfd == -1)
 		goto err;
 
@@ -1183,7 +1213,7 @@ static int run_connect_test_case(const struct sock_addr_test *test)
 		goto err;
 
 	/* Prepare server to connect to */
-	servfd = start_server_addr(test->type, &expected_addr, addr_len, NULL);
+	servfd = start_server(test->type, &expected_addr, addr_len);
 	if (servfd == -1)
 		goto err;
 
@@ -1240,7 +1270,7 @@ static int run_xmsg_test_case(const struct sock_addr_test *test, int max_cmsg)
 		goto err;
 
 	/* Prepare server to sendmsg to */
-	servfd = start_server_addr(test->type, &server_addr, addr_len, NULL);
+	servfd = start_server(test->type, &server_addr, addr_len);
 	if (servfd == -1)
 		goto err;
 
