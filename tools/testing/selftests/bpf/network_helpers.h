@@ -9,7 +9,6 @@ typedef __u16 __sum16;
 #include <linux/if_packet.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-#include <linux/err.h>
 #include <netinet/tcp.h>
 #include <bpf/bpf_endian.h>
 
@@ -75,22 +74,6 @@ int make_netns(const char *name);
 int remove_netns(const char *name);
 
 struct tmonitor_ctx;
-
-/**
- * tc_prog_attach - attach BPF program(s) to an interface
- *
- * Takes file descriptors pointing to at least one, at most two BPF
- * programs, and attach those programs to an interface ingress, egress or
- * both.
- *
- * @dev: string containing the interface name
- * @ingress_fd: file descriptor of the program to attach to interface ingress
- * @egress_fd: file descriptor of the program to attach to interface egress
- *
- * Returns 0 on success, -1 if no valid file descriptor has been found, if
- * the interface name is invalid or if an error ocurred during attach.
- */
-int tc_prog_attach(const char *dev, int ingress_fd, int egress_fd);
 
 #ifdef TRAFFIC_MONITOR
 struct tmonitor_ctx *traffic_monitor_start(const char *netns, const char *test_name,

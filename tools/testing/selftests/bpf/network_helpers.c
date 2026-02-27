@@ -468,30 +468,22 @@ struct nstoken *open_netns(const char *name)
 	struct nstoken *token;
 
 	token = calloc(1, sizeof(struct nstoken));
-	if (!token) {
-		log_err("Failed to malloc token");
+	if (!ASSERT_OK_PTR(token, "malloc token"))
 		return NULL;
-	}
 
 	token->orig_netns_fd = open("/proc/self/ns/net", O_RDONLY);
-	if (token->orig_netns_fd == -1) {
-		log_err("Failed to open(/proc/self/ns/net)");
+	if (!ASSERT_GE(token->orig_netns_fd, 0, "open /proc/self/ns/net"))
 		goto fail;
-	}
 
 	snprintf(nspath, sizeof(nspath), "%s/%s", "/var/run/netns", name);
 	nsfd = open(nspath, O_RDONLY | O_CLOEXEC);
-	if (nsfd == -1) {
-		log_err("Failed to open(%s)", nspath);
+	if (!ASSERT_GE(nsfd, 0, "open netns fd"))
 		goto fail;
-	}
 
 	err = setns(nsfd, CLONE_NEWNET);
 	close(nsfd);
-	if (err) {
-		log_err("Failed to setns(nsfd)");
+	if (!ASSERT_OK(err, "setns"))
 		goto fail;
-	}
 
 	return token;
 fail:
@@ -506,8 +498,7 @@ void close_netns(struct nstoken *token)
 	if (!token)
 		return;
 
-	if (setns(token->orig_netns_fd, CLONE_NEWNET))
-		log_err("Failed to setns(orig_netns_fd)");
+	ASSERT_OK(setns(token->orig_netns_fd, CLONE_NEWNET), "setns");
 	close(token->orig_netns_fd);
 	free(token);
 }
@@ -533,50 +524,6 @@ int get_socket_local_port(int sock_fd)
 	}
 
 	return -1;
-}
-
-int tc_prog_attach(const char *dev, int ingress_fd, int egress_fd)
-{
-	int ifindex, ret;
-
-	if (!ASSERT_TRUE(ingress_fd >= 0 || egress_fd >= 0,
-			 "at least one program fd is valid"))
-		return -1;
-
-	ifindex = if_nametoindex(dev);
-	if (!ASSERT_NEQ(ifindex, 0, "get ifindex"))
-		return -1;
-
-	DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook, .ifindex = ifindex,
-			    .attach_point = BPF_TC_INGRESS | BPF_TC_EGRESS);
-	DECLARE_LIBBPF_OPTS(bpf_tc_opts, opts1, .handle = 1,
-			    .priority = 1, .prog_fd = ingress_fd);
-	DECLARE_LIBBPF_OPTS(bpf_tc_opts, opts2, .handle = 1,
-			    .priority = 1, .prog_fd = egress_fd);
-
-	ret = bpf_tc_hook_create(&hook);
-	if (!ASSERT_OK(ret, "create tc hook"))
-		return ret;
-
-	if (ingress_fd >= 0) {
-		hook.attach_point = BPF_TC_INGRESS;
-		ret = bpf_tc_attach(&hook, &opts1);
-		if (!ASSERT_OK(ret, "bpf_tc_attach")) {
-			bpf_tc_hook_destroy(&hook);
-			return ret;
-		}
-	}
-
-	if (egress_fd >= 0) {
-		hook.attach_point = BPF_TC_EGRESS;
-		ret = bpf_tc_attach(&hook, &opts2);
-		if (!ASSERT_OK(ret, "bpf_tc_attach")) {
-			bpf_tc_hook_destroy(&hook);
-			return ret;
-		}
-	}
-
-	return 0;
 }
 
 #ifdef TRAFFIC_MONITOR
