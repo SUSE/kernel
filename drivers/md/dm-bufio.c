@@ -1355,7 +1355,7 @@ static void use_bio(struct dm_buffer *b, enum req_op op, sector_t sector,
 		use_dmio(b, op, sector, n_sectors, offset, ioprio);
 		return;
 	}
-	bio_init(bio, b->c->bdev, bio->bi_inline_vecs, 1, op);
+	bio_init_inline(bio, b->c->bdev, 1, op);
 	bio->bi_iter.bi_sector = sector;
 	bio->bi_end_io = bio_complete;
 	bio->bi_private = b;
@@ -1364,7 +1364,7 @@ static void use_bio(struct dm_buffer *b, enum req_op op, sector_t sector,
 	ptr = (char *)b->data + offset;
 	len = n_sectors << SECTOR_SHIFT;
 
-	__bio_add_page(bio, virt_to_page(ptr), len, offset_in_page(ptr));
+	bio_add_virt_nofail(bio, ptr, len);
 
 	submit_bio(bio);
 }

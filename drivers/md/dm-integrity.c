@@ -2557,14 +2557,8 @@ static void dm_integrity_inline_recheck(struct work_struct *w)
 		char *mem;
 
 		outgoing_bio = bio_alloc_bioset(ic->dev->bdev, 1, REQ_OP_READ, GFP_NOIO, &ic->recheck_bios);
-
-		r = bio_add_page(outgoing_bio, virt_to_page(outgoing_data), ic->sectors_per_block << SECTOR_SHIFT, 0);
-		if (unlikely(r != (ic->sectors_per_block << SECTOR_SHIFT))) {
-			bio_put(outgoing_bio);
-			bio->bi_status = BLK_STS_RESOURCE;
-			bio_endio(bio);
-			return;
-		}
+		bio_add_virt_nofail(outgoing_bio, outgoing_data,
+				ic->sectors_per_block << SECTOR_SHIFT);
 
 		bip = bio_integrity_alloc(outgoing_bio, GFP_NOIO, 1);
 		if (IS_ERR(bip)) {
@@ -3211,7 +3205,8 @@ next_chunk:
 
 	bio = bio_alloc_bioset(ic->dev->bdev, 1, REQ_OP_READ, GFP_NOIO, &ic->recalc_bios);
 	bio->bi_iter.bi_sector = ic->start + SB_SECTORS + range.logical_sector;
-	__bio_add_page(bio, virt_to_page(recalc_buffer), range.n_sectors << SECTOR_SHIFT, offset_in_page(recalc_buffer));
+	bio_add_virt_nofail(bio, recalc_buffer,
+			range.n_sectors << SECTOR_SHIFT);
 	r = submit_bio_wait(bio);
 	bio_put(bio);
 	if (unlikely(r)) {
@@ -3228,7 +3223,8 @@ next_chunk:
 
 	bio = bio_alloc_bioset(ic->dev->bdev, 1, REQ_OP_WRITE, GFP_NOIO, &ic->recalc_bios);
 	bio->bi_iter.bi_sector = ic->start + SB_SECTORS + range.logical_sector;
-	__bio_add_page(bio, virt_to_page(recalc_buffer), range.n_sectors << SECTOR_SHIFT, offset_in_page(recalc_buffer));
+	bio_add_virt_nofail(bio, recalc_buffer,
+			range.n_sectors << SECTOR_SHIFT);
 
 	bip = bio_integrity_alloc(bio, GFP_NOIO, 1);
 	if (unlikely(IS_ERR(bip))) {
@@ -3909,8 +3905,8 @@ static void dm_integrity_io_hints(struct dm_target *ti, struct queue_limits *lim
 		struct blk_integrity *bi = &limits->integrity;
 
 		memset(bi, 0, sizeof(*bi));
-		bi->tuple_size = ic->tag_size;
-		bi->tag_size = bi->tuple_size;
+		bi->metadata_size = ic->tag_size;
+		bi->tag_size = bi->metadata_size;
 		bi->interval_exp =
 			ic->sb->log2_sectors_per_block + SECTOR_SHIFT;
 	}
@@ -4749,18 +4745,18 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned int argc, char **argv
 			ti->error = "Integrity profile not supported";
 			goto bad;
 		}
-		/*printk("tag_size: %u, tuple_size: %u\n", bi->tag_size, bi->tuple_size);*/
-		if (bi->tuple_size < ic->tag_size) {
+		/*printk("tag_size: %u, metadata_size: %u\n", bi->tag_size, bi->metadata_size);*/
+		if (bi->metadata_size < ic->tag_size) {
 			r = -EINVAL;
 			ti->error = "The integrity profile is smaller than tag size";
 			goto bad;
 		}
-		if ((unsigned long)bi->tuple_size > PAGE_SIZE / 2) {
+		if ((unsigned long)bi->metadata_size > PAGE_SIZE / 2) {
 			r = -EINVAL;
 			ti->error = "Too big tuple size";
 			goto bad;
 		}
-		ic->tuple_size = bi->tuple_size;
+		ic->tuple_size = bi->metadata_size;
 		if (1 << bi->interval_exp != ic->sectors_per_block << SECTOR_SHIFT) {
 			r = -EINVAL;
 			ti->error = "Integrity profile sector size mismatch";
@@ -4810,21 +4806,9 @@ static int dm_integrity_ctr(struct dm_target *ti, unsigned int argc, char **argv
 			ti->error = "Cannot allocate bio set";
 			goto bad;
 		}
-		r = bioset_integrity_create(&ic->recheck_bios, RECHECK_POOL_SIZE);
-		if (r) {
-			ti->error = "Cannot allocate bio integrity set";
-			r = -ENOMEM;
-			goto bad;
-		}
 		r = bioset_init(&ic->recalc_bios, 1, 0, BIOSET_NEED_BVECS);
 		if (r) {
 			ti->error = "Cannot allocate bio set";
-			goto bad;
-		}
-		r = bioset_integrity_create(&ic->recalc_bios, 1);
-		if (r) {
-			ti->error = "Cannot allocate bio integrity set";
-			r = -ENOMEM;
 			goto bad;
 		}
 	}

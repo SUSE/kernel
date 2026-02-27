@@ -9,6 +9,7 @@
 #include <linux/prefetch.h>
 #include <linux/srcu.h>
 #include <linux/rw_hint.h>
+#include <linux/rwsem.h>
 
 struct blk_mq_tags;
 struct blk_flush_queue;
@@ -151,6 +152,14 @@ struct request {
 	unsigned short nr_phys_segments;
 	unsigned short nr_integrity_segments;
 
+	/*
+	 * The lowest set bit for address gaps between physical segments. This
+	 * provides information necessary for dma optimization opprotunities,
+	 * like for testing if the segments can be coalesced against the
+	 * device's iommu granule.
+	 */
+	unsigned char phys_gap_bit;
+
 #ifdef CONFIG_BLK_INLINE_ENCRYPTION
 	struct bio_crypt_ctx *crypt_ctx;
 	struct blk_crypto_keyslot *crypt_keyslot;
@@ -206,6 +215,14 @@ struct request {
 	rq_end_io_fn *end_io;
 	void *end_io_data;
 };
+
+/*
+ * Returns a mask with all bits starting at req->phys_gap_bit set to 1.
+ */
+static inline unsigned long req_phys_gap_mask(const struct request *req)
+{
+	return ~(((1 << req->phys_gap_bit) >> 1) - 1);
+}
 
 static inline enum req_op req_op(const struct request *req)
 {
@@ -508,6 +525,11 @@ enum hctx_type {
  *		   request_queue.tag_set_list.
  * @srcu:	   Use as lock when type of the request queue is blocking
  *		   (BLK_MQ_F_BLOCKING).
+ * @tags_srcu:	   SRCU used to defer freeing of tags page_list to prevent
+ *		   use-after-free when iterating tags.
+ * @update_nr_hwq_lock:
+ * 		   Synchronize updating nr_hw_queues with add/del disk &
+ * 		   switching elevator.
  */
 struct blk_mq_tag_set {
 	const struct blk_mq_ops	*ops;
@@ -529,6 +551,9 @@ struct blk_mq_tag_set {
 	struct mutex		tag_list_lock;
 	struct list_head	tag_list;
 	struct srcu_struct	*srcu;
+	struct srcu_struct	tags_srcu;
+
+	struct rw_semaphore	update_nr_hwq_lock;
 };
 
 /**
@@ -765,6 +790,7 @@ struct blk_mq_tags {
 	 * request pool
 	 */
 	spinlock_t lock;
+	struct rcu_head rcu_head;
 };
 
 static inline struct request *blk_mq_tag_to_rq(struct blk_mq_tags *tags,
@@ -993,8 +1019,20 @@ static inline void *blk_mq_rq_to_pdu(struct request *rq)
 	return rq + 1;
 }
 
+static inline struct blk_mq_hw_ctx *queue_hctx(struct request_queue *q, int id)
+{
+	struct blk_mq_hw_ctx *hctx;
+
+	rcu_read_lock();
+	hctx = rcu_dereference(q->queue_hw_ctx)[id];
+	rcu_read_unlock();
+
+	return hctx;
+}
+
 #define queue_for_each_hw_ctx(q, hctx, i)				\
-	xa_for_each(&(q)->hctx_table, (i), (hctx))
+	for ((i) = 0; (i) < (q)->nr_hw_queues &&			\
+	     ({ hctx = queue_hctx((q), i); 1; }); (i)++)
 
 #define hctx_for_each_ctx(hctx, ctx, i)					\
 	for ((i) = 0; (i) < (hctx)->nr_ctx &&				\
@@ -1037,8 +1075,8 @@ int blk_rq_map_user_io(struct request *, struct rq_map_data *,
 int blk_rq_map_user_iov(struct request_queue *, struct request *,
 		struct rq_map_data *, const struct iov_iter *, gfp_t);
 int blk_rq_unmap_user(struct bio *);
-int blk_rq_map_kern(struct request_queue *, struct request *, void *,
-		unsigned int, gfp_t);
+int blk_rq_map_kern(struct request *rq, void *kbuf, unsigned int len,
+		gfp_t gfp);
 int blk_rq_append_bio(struct request *rq, struct bio *bio);
 void blk_execute_rq_nowait(struct request *rq, bool at_head);
 blk_status_t blk_execute_rq(struct request *rq, bool at_head);

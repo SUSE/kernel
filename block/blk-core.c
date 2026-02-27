@@ -429,6 +429,7 @@ struct request_queue *blk_alloc_queue(struct queue_limits *lim, int node_id)
 
 	refcount_set(&q->refs, 1);
 	mutex_init(&q->debugfs_mutex);
+	mutex_init(&q->elevator_lock);
 	mutex_init(&q->sysfs_lock);
 	mutex_init(&q->limits_lock);
 	mutex_init(&q->rq_qos_mutex);
@@ -454,6 +455,12 @@ struct request_queue *blk_alloc_queue(struct queue_limits *lim, int node_id)
 			 &q->io_lock_cls_key, 0);
 	lockdep_init_map(&q->q_lockdep_map, "&q->q_usage_counter(queue)",
 			 &q->q_lock_cls_key, 0);
+
+	/* Teach lockdep about lock ordering (reclaim WRT queue freeze lock). */
+	fs_reclaim_acquire(GFP_KERNEL);
+	rwsem_acquire_read(&q->io_lockdep_map, 0, 0, _RET_IP_);
+	rwsem_release(&q->io_lockdep_map, _RET_IP_);
+	fs_reclaim_release(GFP_KERNEL);
 
 	q->nr_requests = BLKDEV_DEFAULT_RQ;
 
@@ -553,6 +560,8 @@ static inline int bio_check_eod(struct bio *bio)
 	if (nr_sectors &&
 	    (nr_sectors > maxsector ||
 	     bio->bi_iter.bi_sector > maxsector - nr_sectors)) {
+		if (!maxsector)
+			return -EIO;
 		pr_info_ratelimited("%s: attempt to access beyond end of device\n"
 				    "%pg: rw=%d, sector=%llu, nr_sectors = %u limit=%llu\n",
 				    current->comm, bio->bi_bdev, bio->bi_opf,
@@ -721,7 +730,6 @@ static void __submit_bio_noacct_mq(struct bio *bio)
 void submit_bio_noacct_nocheck(struct bio *bio)
 {
 	blk_cgroup_bio_start(bio);
-	blkcg_bio_issue_init(bio);
 
 	if (!bio_flagged(bio, BIO_TRACE_COMPLETION)) {
 		trace_block_bio_queue(bio);
@@ -1011,7 +1019,7 @@ again:
 	stamp = READ_ONCE(part->bd_stamp);
 	if (unlikely(time_after(now, stamp)) &&
 	    likely(try_cmpxchg(&part->bd_stamp, &stamp, now)) &&
-	    (end || part_in_flight(part)))
+	    (end || bdev_count_inflight(part)))
 		__part_stat_add(part, io_ticks, now - stamp);
 
 	if (bdev_is_partition(part)) {

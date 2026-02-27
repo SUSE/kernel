@@ -33,10 +33,12 @@ struct nvme_loop_ctrl {
 
 	struct list_head	list;
 	struct blk_mq_tag_set	tag_set;
-	struct nvme_loop_iod	async_event_iod;
 	struct nvme_ctrl	ctrl;
 
 	struct nvmet_port	*port;
+
+	/* Must be last --ends in a flexible-array member. */
+	struct nvme_loop_iod	async_event_iod;
 };
 
 static inline struct nvme_loop_ctrl *to_loop_ctrl(struct nvme_ctrl *ctrl)
@@ -500,6 +502,7 @@ static const struct nvme_ctrl_ops nvme_loop_ctrl_ops = {
 	.submit_async_event	= nvme_loop_submit_async_event,
 	.delete_ctrl		= nvme_loop_delete_ctrl_host,
 	.get_address		= nvmf_get_address,
+	.get_virt_boundary	= nvme_get_virt_boundary,
 };
 
 static int nvme_loop_create_io_queues(struct nvme_loop_ctrl *ctrl)

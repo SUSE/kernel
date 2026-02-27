@@ -7,6 +7,7 @@
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/blkdev.h>
+#include <linux/blk-integrity.h>
 #include <linux/buffer_head.h>
 #include <linux/mpage.h>
 #include <linux/uio.h>
@@ -38,8 +39,15 @@ static blk_opf_t dio_bio_write_op(struct kiocb *iocb)
 static bool blkdev_dio_invalid(struct block_device *bdev, struct kiocb *iocb,
 				struct iov_iter *iter)
 {
-	return iocb->ki_pos & (bdev_logical_block_size(bdev) - 1) ||
-		!bdev_iter_is_aligned(bdev, iter);
+	return (iocb->ki_pos | iov_iter_count(iter)) &
+			(bdev_logical_block_size(bdev) - 1);
+}
+
+static inline int blkdev_iov_iter_get_pages(struct bio *bio,
+		struct iov_iter *iter, struct block_device *bdev)
+{
+	return bio_iov_iter_get_pages(bio, iter,
+			bdev_logical_block_size(bdev) - 1);
 }
 
 #define DIO_INLINE_BIO_VECS 4
@@ -73,11 +81,12 @@ static ssize_t __blkdev_direct_IO_simple(struct kiocb *iocb,
 	}
 	bio.bi_iter.bi_sector = pos >> SECTOR_SHIFT;
 	bio.bi_write_hint = file_inode(iocb->ki_filp)->i_write_hint;
+	bio.bi_write_stream = iocb->ki_write_stream;
 	bio.bi_ioprio = iocb->ki_ioprio;
 	if (iocb->ki_flags & IOCB_ATOMIC)
 		bio.bi_opf |= REQ_ATOMIC;
 
-	ret = bio_iov_iter_get_pages(&bio, iter);
+	ret = blkdev_iov_iter_get_pages(&bio, iter, bdev);
 	if (unlikely(ret))
 		goto out;
 	ret = bio.bi_iter.bi_size;
@@ -176,8 +185,6 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 	loff_t pos = iocb->ki_pos;
 	int ret = 0;
 
-	if (iocb->ki_flags & IOCB_ALLOC_CACHE)
-		opf |= REQ_ALLOC_CACHE;
 	bio = bio_alloc_bioset(bdev, nr_pages, opf, GFP_KERNEL,
 			       &blkdev_dio_pool);
 	dio = container_of(bio, struct blkdev_dio, bio);
@@ -206,11 +213,12 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 	for (;;) {
 		bio->bi_iter.bi_sector = pos >> SECTOR_SHIFT;
 		bio->bi_write_hint = file_inode(iocb->ki_filp)->i_write_hint;
+		bio->bi_write_stream = iocb->ki_write_stream;
 		bio->bi_private = dio;
 		bio->bi_end_io = blkdev_bio_end_io;
 		bio->bi_ioprio = iocb->ki_ioprio;
 
-		ret = bio_iov_iter_get_pages(bio, iter);
+		ret = blkdev_iov_iter_get_pages(bio, iter, bdev);
 		if (unlikely(ret)) {
 			bio->bi_status = BLK_STS_IOERR;
 			bio_endio(bio);
@@ -324,8 +332,6 @@ static ssize_t __blkdev_direct_IO_async(struct kiocb *iocb,
 	loff_t pos = iocb->ki_pos;
 	int ret = 0;
 
-	if (iocb->ki_flags & IOCB_ALLOC_CACHE)
-		opf |= REQ_ALLOC_CACHE;
 	bio = bio_alloc_bioset(bdev, nr_pages, opf, GFP_KERNEL,
 			       &blkdev_dio_pool);
 	dio = container_of(bio, struct blkdev_dio, bio);
@@ -333,6 +339,7 @@ static ssize_t __blkdev_direct_IO_async(struct kiocb *iocb,
 	dio->iocb = iocb;
 	bio->bi_iter.bi_sector = pos >> SECTOR_SHIFT;
 	bio->bi_write_hint = file_inode(iocb->ki_filp)->i_write_hint;
+	bio->bi_write_stream = iocb->ki_write_stream;
 	bio->bi_end_io = blkdev_bio_end_io_async;
 	bio->bi_ioprio = iocb->ki_ioprio;
 
@@ -345,7 +352,7 @@ static ssize_t __blkdev_direct_IO_async(struct kiocb *iocb,
 		 */
 		bio_iov_bvec_set(bio, iter);
 	} else {
-		ret = bio_iov_iter_get_pages(bio, iter);
+		ret = blkdev_iov_iter_get_pages(bio, iter, bdev);
 		if (unlikely(ret))
 			goto out_bio_put;
 	}
@@ -397,6 +404,26 @@ static ssize_t blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 
 	if (blkdev_dio_invalid(bdev, iocb, iter))
 		return -EINVAL;
+
+	if (iov_iter_rw(iter) == WRITE) {
+		u16 max_write_streams = bdev_max_write_streams(bdev);
+
+		if (iocb->ki_write_stream) {
+			if (iocb->ki_write_stream > max_write_streams)
+				return -EINVAL;
+		} else if (max_write_streams) {
+			enum rw_hint write_hint =
+				file_inode(iocb->ki_filp)->i_write_hint;
+
+			/*
+			 * Just use the write hint as write stream for block
+			 * device writes.  This assumes no file system is
+			 * mounted that would use the streams differently.
+			 */
+			if (write_hint <= max_write_streams)
+				iocb->ki_write_stream = write_hint;
+		}
+	}
 
 	nr_pages = bio_iov_vecs_to_alloc(iter, BIO_MAX_VECS + 1);
 	if (likely(nr_pages <= BIO_MAX_VECS)) {
@@ -451,12 +478,13 @@ static int blkdev_get_block(struct inode *inode, sector_t iblock,
 static int blkdev_writepages(struct address_space *mapping,
 		struct writeback_control *wbc)
 {
+	struct folio *folio = NULL;
 	struct blk_plug plug;
 	int err;
 
 	blk_start_plug(&plug);
-	err = write_cache_pages(mapping, wbc, block_write_full_folio,
-			blkdev_get_block);
+	while ((folio = writeback_iter(mapping, wbc, folio, &err)))
+		err = block_write_full_folio(folio, wbc, blkdev_get_block);
 	blk_finish_plug(&plug);
 
 	return err;
@@ -642,12 +670,14 @@ static int blkdev_open(struct inode *inode, struct file *filp)
 	if (ret)
 		return ret;
 
-	bdev = blkdev_get_no_open(inode->i_rdev);
+	bdev = blkdev_get_no_open(inode->i_rdev, true);
 	if (!bdev)
 		return -ENXIO;
 
 	if (bdev_can_atomic_write(bdev))
 		filp->f_mode |= FMODE_CAN_ATOMIC_WRITE;
+	if (blk_get_integrity(bdev->bd_disk))
+		filp->f_mode |= FMODE_HAS_METADATA;
 
 	ret = bdev_open(bdev, mode, filp->private_data, NULL, filp);
 	if (ret)

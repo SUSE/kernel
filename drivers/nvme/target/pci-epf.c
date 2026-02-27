@@ -62,8 +62,7 @@ static DEFINE_MUTEX(nvmet_pci_epf_ports_mutex);
 #define NVMET_PCI_EPF_CQ_RETRY_INTERVAL	msecs_to_jiffies(1)
 
 enum nvmet_pci_epf_queue_flags {
-	NVMET_PCI_EPF_Q_IS_SQ = 0,	/* The queue is a submission queue */
-	NVMET_PCI_EPF_Q_LIVE,		/* The queue is live */
+	NVMET_PCI_EPF_Q_LIVE = 0,	/* The queue is live */
 	NVMET_PCI_EPF_Q_IRQ_ENABLED,	/* IRQ is enabled for this queue */
 };
 
@@ -596,9 +595,6 @@ static bool nvmet_pci_epf_should_raise_irq(struct nvmet_pci_epf_ctrl *ctrl,
 	struct nvmet_pci_epf_irq_vector *iv = cq->iv;
 	bool ret;
 
-	if (!test_bit(NVMET_PCI_EPF_Q_IRQ_ENABLED, &cq->flags))
-		return false;
-
 	/* IRQ coalescing for the admin queue is not allowed. */
 	if (!cq->qid)
 		return true;
@@ -625,7 +621,8 @@ static void nvmet_pci_epf_raise_irq(struct nvmet_pci_epf_ctrl *ctrl,
 	struct pci_epf *epf = nvme_epf->epf;
 	int ret = 0;
 
-	if (!test_bit(NVMET_PCI_EPF_Q_LIVE, &cq->flags))
+	if (!test_bit(NVMET_PCI_EPF_Q_LIVE, &cq->flags) ||
+	    !test_bit(NVMET_PCI_EPF_Q_IRQ_ENABLED, &cq->flags))
 		return;
 
 	mutex_lock(&ctrl->irq_lock);
@@ -636,14 +633,16 @@ static void nvmet_pci_epf_raise_irq(struct nvmet_pci_epf_ctrl *ctrl,
 	switch (nvme_epf->irq_type) {
 	case PCI_IRQ_MSIX:
 	case PCI_IRQ_MSI:
+		/*
+		 * If we fail to raise an MSI or MSI-X interrupt, it is likely
+		 * because the host is using legacy INTX IRQs (e.g. BIOS,
+		 * grub), but we can fallback to the INTX type only if the
+		 * endpoint controller supports this type.
+		 */
 		ret = pci_epc_raise_irq(epf->epc, epf->func_no, epf->vfunc_no,
 					nvme_epf->irq_type, cq->vector + 1);
-		if (!ret)
+		if (!ret || !nvme_epf->epc_features->intx_capable)
 			break;
-		/*
-		 * If we got an error, it is likely because the host is using
-		 * legacy IRQs (e.g. BIOS, grub).
-		 */
 		fallthrough;
 	case PCI_IRQ_INTX:
 		ret = pci_epc_raise_irq(epf->epc, epf->func_no, epf->vfunc_no,
@@ -656,7 +655,9 @@ static void nvmet_pci_epf_raise_irq(struct nvmet_pci_epf_ctrl *ctrl,
 	}
 
 	if (ret)
-		dev_err(ctrl->dev, "Failed to raise IRQ (err=%d)\n", ret);
+		dev_err_ratelimited(ctrl->dev,
+				    "CQ[%u]: Failed to raise IRQ (err=%d)\n",
+				    cq->qid, ret);
 
 unlock:
 	mutex_unlock(&ctrl->irq_lock);
@@ -1322,8 +1323,14 @@ static u16 nvmet_pci_epf_create_cq(struct nvmet_ctrl *tctrl,
 
 	set_bit(NVMET_PCI_EPF_Q_LIVE, &cq->flags);
 
-	dev_dbg(ctrl->dev, "CQ[%u]: %u entries of %zu B, IRQ vector %u\n",
-		cqid, qsize, cq->qes, cq->vector);
+	if (test_bit(NVMET_PCI_EPF_Q_IRQ_ENABLED, &cq->flags))
+		dev_dbg(ctrl->dev,
+			"CQ[%u]: %u entries of %zu B, IRQ vector %u\n",
+			cqid, qsize, cq->qes, cq->vector);
+	else
+		dev_dbg(ctrl->dev,
+			"CQ[%u]: %u entries of %zu B, IRQ disabled\n",
+			cqid, qsize, cq->qes);
 
 	return NVME_SC_SUCCESS;
 
@@ -1538,7 +1545,6 @@ static void nvmet_pci_epf_init_queue(struct nvmet_pci_epf_ctrl *ctrl,
 
 	if (sq) {
 		queue = &ctrl->sq[qid];
-		set_bit(NVMET_PCI_EPF_Q_IS_SQ, &queue->flags);
 	} else {
 		queue = &ctrl->cq[qid];
 		INIT_DELAYED_WORK(&queue->work, nvmet_pci_epf_cq_work);
